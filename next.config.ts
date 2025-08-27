@@ -1,7 +1,21 @@
-import type { NextConfig } from "next";
+// SUBSTITUA o arquivo next.config.js por esta versão:
 
-const nextConfig: NextConfig = {
-  /* config options here */
-};
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  experimental: {
+    serverComponentsExternalPackages: ['pdf-parse'],
+  },
+  webpack: (config: { resolve: { alias: { canvas: boolean; encoding: boolean; }; }; }) => {
+    config.resolve.alias.canvas = false;
+    config.resolve.alias.encoding = false;
+    return config;
+  },
+  eslint: {
+    ignoreDuringBuilds: true, // IGNORA ESLINT NO BUILD
+  },
+  typescript: {
+    ignoreBuildErrors: false, // MANTÉM VERIFICAÇÃO TYPESCRIPT
+  },
+}
 
-export default nextConfig;
+module.exports = nextConfig

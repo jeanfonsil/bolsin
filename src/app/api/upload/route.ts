@@ -1,10 +1,6 @@
-// SUBSTITUA o arquivo src/app/api/upload/route.ts por esta versão com debug:
+// SUBSTITUA COMPLETAMENTE o arquivo src/app/api/upload/route.ts:
 
 import { NextRequest, NextResponse } from 'next/server'
-import { writeFile, mkdir } from 'fs/promises'
-import { existsSync } from 'fs'
-import path from 'path'
-import { prisma } from '@/lib/prisma'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 const ALLOWED_TYPES = [
@@ -13,33 +9,21 @@ const ALLOWED_TYPES = [
   'application/vnd.ms-excel',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 ]
-const UPLOAD_DIR = path.join(process.cwd(), 'uploads')
 
-async function ensureUploadDir() {
-  try {
-    if (!existsSync(UPLOAD_DIR)) {
-      await mkdir(UPLOAD_DIR, { recursive: true })
-      console.log('📁 Diretório de upload criado:', UPLOAD_DIR)
-    } else {
-      console.log('📁 Diretório de upload já existe:', UPLOAD_DIR)
-    }
-  } catch (error) {
-    console.error('❌ Erro ao criar diretório:', error)
-    throw error
-  }
-}
+// Store em memória (temporário para MVP)
+const fileStore = new Map<string, {
+  buffer: Buffer
+  metadata: any
+}>()
 
 export async function POST(request: NextRequest) {
   console.log('🔄 Upload API iniciada...')
   
   try {
-    console.log('1️⃣ Verificando diretório de upload...')
-    await ensureUploadDir()
-
-    console.log('2️⃣ Parseando form data...')
+    console.log('1️⃣ Parseando form data...')
     const formData = await request.formData()
     
-    console.log('3️⃣ Extraindo arquivo e userId...')
+    console.log('2️⃣ Extraindo arquivo...')
     const file = formData.get('file') as File
     const userId = formData.get('userId') as string || 'anonymous'
 
@@ -59,7 +43,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log('4️⃣ Validando tipo de arquivo...')
+    console.log('3️⃣ Validando tipo de arquivo...')
     if (!ALLOWED_TYPES.includes(file.type)) {
       console.log('❌ Tipo não permitido:', file.type)
       return NextResponse.json(
@@ -72,7 +56,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log('5️⃣ Validando tamanho...')
+    console.log('4️⃣ Validando tamanho...')
     if (file.size > MAX_FILE_SIZE) {
       console.log('❌ Arquivo muito grande:', file.size)
       return NextResponse.json(
@@ -85,45 +69,54 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log(`6️⃣ Upload válido: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`)
+    console.log(`5️⃣ Upload válido: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`)
 
-    console.log('7️⃣ Gerando nome único...')
-    const timestamp = Date.now()
-    const randomId = Math.random().toString(36).substring(2)
-    const fileExtension = path.extname(file.name)
-    const uniqueFileName = `${timestamp}-${randomId}${fileExtension}`
-    const filePath = path.join(UPLOAD_DIR, uniqueFileName)
-
-    console.log('📁 Caminho do arquivo:', filePath)
-
-    console.log('8️⃣ Convertendo para buffer...')
+    console.log('6️⃣ Processando arquivo em memória...')
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
 
-    console.log('9️⃣ Salvando arquivo...')
-    await writeFile(filePath, buffer)
-    console.log('✅ Arquivo salvo com sucesso!')
+    // Gerar ID único
+    const timestamp = Date.now()
+    const randomId = Math.random().toString(36).substring(2)
+    const fileId = `${timestamp}-${randomId}`
 
-    // 🔟 Por enquanto, não salvar no banco - apenas retornar dados mock
-    console.log('⚠️ Modo desenvolvimento: não salvando no banco')
+    console.log('7️⃣ Salvando em memória...')
     
-    const mockId = `mock-${timestamp}-${randomId}`
-    
+    // Armazenar em memória temporariamente
+    const metadata = {
+      id: fileId,
+      originalName: file.name,
+      fileName: `${fileId}.${getFileExtension(file.name)}`,
+      fileSize: file.size,
+      fileType: getFileTypeFromMime(file.type),
+      uploadedAt: new Date(),
+      status: 'uploaded',
+      userId
+    }
+
+    // Store file data in memory
+    fileStore.set(fileId, {
+      buffer,
+      metadata
+    })
+
+    console.log('✅ Arquivo processado em memória:', fileId)
+
     const responseData = {
       success: true,
       data: {
-        id: mockId,
-        fileName: uniqueFileName,
+        id: fileId,
+        fileName: metadata.fileName,
         originalName: file.name,
         fileSize: file.size,
-        fileType: getFileTypeFromMime(file.type),
-        uploadedAt: new Date(),
+        fileType: metadata.fileType,
+        uploadedAt: metadata.uploadedAt,
         status: 'uploaded',
-        mode: 'development-mock'
+        mode: 'memory-storage'
       }
     }
 
-    console.log('🎉 Upload concluído com sucesso! Resposta:', responseData)
+    console.log('🎉 Upload concluído:', responseData)
 
     return NextResponse.json(responseData)
 
@@ -135,7 +128,9 @@ export async function POST(request: NextRequest) {
       { 
         error: 'Erro interno do servidor',
         message: error instanceof Error ? error.message : 'Erro desconhecido',
-        details: process.env.NODE_ENV === 'development' ? error : undefined
+        details: process.env.NODE_ENV === 'development' ? {
+          stack: error instanceof Error ? error.stack : undefined
+        } : undefined
       },
       { status: 500 }
     )
@@ -158,24 +153,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const bankExtract = await prisma.bankExtract.findUnique({
-      where: { id: fileId },
-      include: {
-        transactions: {
-          select: {
-            id: true,
-            description: true,
-            amount: true,
-            category: true,
-            confidence: true,
-            type: true,
-            date: true
-          }
-        }
-      }
-    })
-
-    if (!bankExtract) {
+    // Buscar no store em memória
+    const fileData = fileStore.get(fileId)
+    
+    if (!fileData) {
       console.log('❌ Arquivo não encontrado:', fileId)
       return NextResponse.json(
         { error: 'Arquivo não encontrado' },
@@ -183,13 +164,45 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    console.log('✅ Arquivo encontrado:', bankExtract.id)
+    console.log('✅ Arquivo encontrado:', fileId)
+
+    // Simular transações para download
+    const mockTransactions = [
+      {
+        id: '1',
+        description: 'UBER EATS PEDIDO 1234',
+        amount: 45.90,
+        category: 'Alimentação',
+        confidence: 0.95,
+        type: 'debit',
+        date: new Date('2024-08-26')
+      },
+      {
+        id: '2', 
+        description: 'POSTO SHELL COMBUSTIVEL',
+        amount: 89.50,
+        category: 'Transporte',
+        confidence: 0.92,
+        type: 'debit',
+        date: new Date('2024-08-25')
+      },
+      {
+        id: '3',
+        description: 'NETFLIX ASSINATURA',
+        amount: 29.90,
+        category: 'Lazer',
+        confidence: 0.88,
+        type: 'debit', 
+        date: new Date('2024-08-24')
+      }
+    ]
 
     return NextResponse.json({
       success: true,
       data: {
-        ...bankExtract,
-        transactionCount: bankExtract.transactions.length
+        ...fileData.metadata,
+        transactions: mockTransactions,
+        transactionCount: mockTransactions.length
       }
     })
 
@@ -210,4 +223,8 @@ function getFileTypeFromMime(mimeType: string): string {
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx'
   }
   return mapping[mimeType as keyof typeof mapping] || 'unknown'
+}
+
+function getFileExtension(filename: string): string {
+  return filename.split('.').pop() || 'unknown'
 }

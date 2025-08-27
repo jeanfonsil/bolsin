@@ -4,12 +4,12 @@ import React from 'react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { 
-  Upload, 
-  Brain, 
-  FileSpreadsheet, 
-  Zap, 
-  Shield, 
+import {
+  Upload,
+  Brain,
+  FileSpreadsheet,
+  Zap,
+  Shield,
   Check,
   ArrowRight,
   Star,
@@ -31,12 +31,19 @@ export default function BolsinLanding() {
               Bolsin
             </span>
           </div>
-          
+
           <div className="flex items-center space-x-4">
-            <Button variant="ghost" className="hidden md:inline-flex">
-              Entrar
+            <Button
+              variant="ghost"
+              className="hidden md:inline-flex"
+              onClick={() => window.location.href = '/dashboard'}
+            >
+              Dashboard
             </Button>
-            <Button className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700">
+            <Button
+              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+              onClick={() => window.location.href = '/dashboard'}
+            >
               Começar Grátis
               <ArrowRight className="ml-2 h-4 w-4" />
             </Button>
@@ -50,31 +57,37 @@ export default function BolsinLanding() {
           <Badge variant="secondary" className="mb-4 text-blue-600 border-blue-200">
             🚀 Powered by OpenAI
           </Badge>
-          
+
           <h1 className="text-4xl md:text-6xl font-bold mb-6 bg-gradient-to-r from-gray-900 via-blue-800 to-indigo-800 bg-clip-text text-transparent leading-tight">
-            Transforme seus extratos bancários em 
+            Transforme seus extratos bancários em
             <span className="block mt-2">planilhas organizadas</span>
           </h1>
-          
+
           <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto leading-relaxed">
-            Chega de perder tempo organizando transações! Nossa IA categoriza automaticamente 
+            Chega de perder tempo organizando transações! Nossa IA categoriza automaticamente
             seus extratos em segundos, gerando planilhas prontas para usar.
           </p>
-          
+
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
-            <Button 
-              size="lg" 
+            <Button
+              size="lg"
               className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 px-8 py-6 text-lg"
+              onClick={() => window.location.href = '/dashboard'}
             >
               <Upload className="mr-2 h-5 w-5" />
               Processar Extrato Grátis
             </Button>
-            <Button variant="outline" size="lg" className="px-8 py-6 text-lg">
+            <Button
+              variant="outline"
+              size="lg"
+              className="px-8 py-6 text-lg"
+              onClick={() => window.location.href = '/dashboard'}
+            >
               <Download className="mr-2 h-5 w-5" />
               Ver Demo
             </Button>
           </div>
-          
+
           {/* Social Proof */}
           <div className="flex items-center justify-center space-x-8 text-gray-500 mb-16">
             <div className="flex items-center space-x-2">
@@ -90,7 +103,7 @@ export default function BolsinLanding() {
               <span>4.9/5 estrelas</span>
             </div>
           </div>
-          
+
           {/* Hero Demo */}
           <div className="relative max-w-4xl mx-auto">
             <div className="bg-white rounded-2xl shadow-2xl p-6 border">
@@ -119,7 +132,7 @@ export default function BolsinLanding() {
               Tecnologia de ponta para simplificar sua vida financeira
             </p>
           </div>
-          
+
           <div className="grid md:grid-cols-3 gap-8">
             <Card className="group hover:shadow-xl transition-all duration-300 border-0 shadow-lg">
               <CardHeader className="text-center pb-4">
@@ -132,7 +145,7 @@ export default function BolsinLanding() {
                 </CardDescription>
               </CardHeader>
             </Card>
-            
+
             <Card className="group hover:shadow-xl transition-all duration-300 border-0 shadow-lg">
               <CardHeader className="text-center pb-4">
                 <div className="w-16 h-16 bg-gradient-to-br from-green-500 to-green-600 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
@@ -144,7 +157,7 @@ export default function BolsinLanding() {
                 </CardDescription>
               </CardHeader>
             </Card>
-            
+
             <Card className="group hover:shadow-xl transition-all duration-300 border-0 shadow-lg">
               <CardHeader className="text-center pb-4">
                 <div className="w-16 h-16 bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
@@ -171,7 +184,7 @@ export default function BolsinLanding() {
               3 passos simples para organizar suas finanças
             </p>
           </div>
-          
+
           <div className="grid md:grid-cols-3 gap-8 max-w-4xl mx-auto">
             <div className="text-center">
               <div className="w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-500 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -182,7 +195,7 @@ export default function BolsinLanding() {
                 Faça upload do seu extrato em PDF ou CSV. Suportamos todos os bancos.
               </p>
             </div>
-            
+
             <div className="text-center">
               <div className="w-20 h-20 bg-gradient-to-br from-green-500 to-emerald-500 rounded-full flex items-center justify-center mx-auto mb-6">
                 <Brain className="h-10 w-10 text-white" />
@@ -192,7 +205,7 @@ export default function BolsinLanding() {
                 Nossa IA categoriza automaticamente todas as transações.
               </p>
             </div>
-            
+
             <div className="text-center">
               <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-pink-500 rounded-full flex items-center justify-center mx-auto mb-6">
                 <FileSpreadsheet className="h-10 w-10 text-white" />
@@ -215,10 +228,11 @@ export default function BolsinLanding() {
           <p className="text-xl mb-8 opacity-90 max-w-2xl mx-auto">
             Junte-se a milhares de pessoas que já simplificaram sua vida financeira
           </p>
-          <Button 
-            size="lg" 
+          <Button
+            size="lg"
             variant="secondary"
             className="bg-white text-blue-600 hover:bg-gray-100 px-8 py-6 text-lg"
+            onClick={() => window.location.href = '/dashboard'}
           >
             Começar Gratuitamente
             <ArrowRight className="ml-2 h-5 w-5" />
