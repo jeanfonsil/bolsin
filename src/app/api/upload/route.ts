@@ -1,5 +1,3 @@
-// SUBSTITUA COMPLETAMENTE o arquivo src/app/api/upload/route.ts:
-
 import { NextRequest, NextResponse } from 'next/server'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
@@ -10,11 +8,21 @@ const ALLOWED_TYPES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 ]
 
-// Store em memória (temporário para MVP)
-const fileStore = new Map<string, {
-  buffer: Buffer
-  metadata: any
-}>()
+// 🔥 USAR STORE GLOBAL (mesmo que process/route.ts)
+declare global {
+  var fileStore: Map<string, {
+    buffer: Buffer
+    metadata: any
+  }>
+}
+
+if (typeof global !== 'undefined') {
+  if (!global.fileStore) {
+    global.fileStore = new Map()
+  }
+}
+
+const fileStore = global.fileStore // 🔥 USAR STORE GLOBAL
 
 export async function POST(request: NextRequest) {
   console.log('🔄 Upload API iniciada...')
@@ -26,14 +34,6 @@ export async function POST(request: NextRequest) {
     console.log('2️⃣ Extraindo arquivo...')
     const file = formData.get('file') as File
     const userId = formData.get('userId') as string || 'anonymous'
-
-    console.log('📊 Dados recebidos:', {
-      hasFile: !!file,
-      fileName: file?.name,
-      fileType: file?.type,
-      fileSize: file?.size,
-      userId
-    })
 
     if (!file) {
       console.log('❌ Nenhum arquivo enviado')
@@ -75,14 +75,24 @@ export async function POST(request: NextRequest) {
     const bytes = await file.arrayBuffer()
     const buffer = Buffer.from(bytes)
 
-    // Gerar ID único
+    // Gerar ID único DETERMINÍSTICO
     const timestamp = Date.now()
-    const randomId = Math.random().toString(36).substring(2)
+    const randomId = Math.random().toString(36).substring(2, 15)
     const fileId = `${timestamp}-${randomId}`
-
-    console.log('7️⃣ Salvando em memória...')
     
-    // Armazenar em memória temporariamente
+    console.log('🆔 ID gerado:', fileId)
+
+    // 🔥 Salvar arquivo original como string para CSV
+    let originalContent = null
+    if (getFileTypeFromMime(file.type) === 'csv') {
+      originalContent = buffer.toString('utf-8')
+      console.log('📄 Conteúdo CSV salvo:', originalContent.length, 'caracteres')
+      // 🔍 Preview do conteúdo para debug
+      console.log('📄 Preview:', originalContent.substring(0, 200) + '...')
+    }
+
+    console.log('7️⃣ Salvando em memória GLOBAL...')
+    
     const metadata = {
       id: fileId,
       originalName: file.name,
@@ -91,33 +101,35 @@ export async function POST(request: NextRequest) {
       fileType: getFileTypeFromMime(file.type),
       uploadedAt: new Date(),
       status: 'uploaded',
-      userId
+      userId,
+      originalContent // 🔥 SALVAR conteúdo original
     }
 
-    // Store file data in memory
+    // 🔥 Store file data in GLOBAL memory
     fileStore.set(fileId, {
       buffer,
       metadata
     })
 
-    console.log('✅ Arquivo processado em memória:', fileId)
+    console.log('✅ Arquivo salvo no store GLOBAL')
+    console.log('🗂️ Store agora tem', fileStore.size, 'arquivos')
+    console.log('🔑 IDs no store:', Array.from(fileStore.keys()))
 
     const responseData = {
       success: true,
       data: {
-        id: fileId,
+        id: fileId, // 🔥 RETORNAR ID CORRETO
         fileName: metadata.fileName,
         originalName: file.name,
         fileSize: file.size,
         fileType: metadata.fileType,
         uploadedAt: metadata.uploadedAt,
         status: 'uploaded',
-        mode: 'memory-storage'
+        mode: 'global-memory-storage'
       }
     }
 
     console.log('🎉 Upload concluído:', responseData)
-
     return NextResponse.json(responseData)
 
   } catch (error) {
@@ -127,23 +139,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { 
         error: 'Erro interno do servidor',
-        message: error instanceof Error ? error.message : 'Erro desconhecido',
-        details: process.env.NODE_ENV === 'development' ? {
-          stack: error instanceof Error ? error.stack : undefined
-        } : undefined
+        message: error instanceof Error ? error.message : 'Erro desconhecido'
       },
       { status: 500 }
     )
   }
 }
 
+// Resto das funções iguais...
 export async function GET(request: NextRequest) {
   console.log('📡 GET /api/upload chamado')
   
   const { searchParams } = new URL(request.url)
   const fileId = searchParams.get('id')
-
-  console.log('🔍 Buscando arquivo ID:', fileId)
 
   if (!fileId) {
     return NextResponse.json(
@@ -153,7 +161,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Buscar no store em memória
+    // 🔥 Buscar no store GLOBAL
     const fileData = fileStore.get(fileId)
     
     if (!fileData) {
@@ -166,43 +174,11 @@ export async function GET(request: NextRequest) {
 
     console.log('✅ Arquivo encontrado:', fileId)
 
-    // Simular transações para download
-    const mockTransactions = [
-      {
-        id: '1',
-        description: 'UBER EATS PEDIDO 1234',
-        amount: 45.90,
-        category: 'Alimentação',
-        confidence: 0.95,
-        type: 'debit',
-        date: new Date('2024-08-26')
-      },
-      {
-        id: '2', 
-        description: 'POSTO SHELL COMBUSTIVEL',
-        amount: 89.50,
-        category: 'Transporte',
-        confidence: 0.92,
-        type: 'debit',
-        date: new Date('2024-08-25')
-      },
-      {
-        id: '3',
-        description: 'NETFLIX ASSINATURA',
-        amount: 29.90,
-        category: 'Lazer',
-        confidence: 0.88,
-        type: 'debit', 
-        date: new Date('2024-08-24')
-      }
-    ]
-
     return NextResponse.json({
       success: true,
       data: {
         ...fileData.metadata,
-        transactions: mockTransactions,
-        transactionCount: mockTransactions.length
+        hasOriginal: !!fileData.metadata.originalContent
       }
     })
 
