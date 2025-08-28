@@ -1,3 +1,5 @@
+// src/lib/parsers/csv-parser.ts - SINTAXE CORRIGIDA
+
 import Papa from 'papaparse'
 import { 
   RawTransaction, 
@@ -19,27 +21,26 @@ export class CSVParser {
       console.log('📊 Iniciando parsing CSV...')
       
       // Parse inicial com PapaParse
-      const parsed = Papa.parse(fileContent, {
+      const parsed = Papa.parse(fileContent as any, {
         header: true,
         dynamicTyping: false, // Manter como string para processamento manual
         skipEmptyLines: 'greedy',
-        delimiter: this.detectDelimiter(fileContent),
-        encoding: 'UTF-8'
+        delimiter: this.detectDelimiter(fileContent)
       })
 
       if (parsed.errors.length > 0) {
-        this.warnings.push(`PapaParse warnings: ${parsed.errors.map(e => e.message).join(', ')}`)
+        this.warnings.push('PapaParse warnings: ' + parsed.errors.map(e => e.message).join(', '))
       }
 
       const rawData = parsed.data as any[]
       const headers = Object.keys(rawData[0] || {})
       
-      console.log(`📋 Headers detectados: ${headers.join(', ')}`)
-      console.log(`📊 ${rawData.length} linhas para processar`)
+      console.log('📋 Headers detectados: ' + headers.join(', '))
+      console.log('📊 ' + rawData.length + ' linhas para processar')
 
       // Detectar banco e mapeamento de colunas
       const bankInfo = this.detectBank(headers)
-      console.log(`🏦 Banco detectado: ${bankInfo.bank} (confiança: ${bankInfo.confidence})`)
+      console.log('🏦 Banco detectado: ' + bankInfo.bank + ' (confiança: ' + bankInfo.confidence + ')')
 
       // Mapear colunas
       const columnMapping = this.mapColumns(headers, bankInfo.mapping)
@@ -48,7 +49,7 @@ export class CSVParser {
       // Processar transações
       const transactions = this.processTransactions(rawData, columnMapping)
       
-      console.log(`✅ ${transactions.length} transações processadas`)
+      console.log('✅ ' + transactions.length + ' transações processadas')
 
       return {
         transactions,
@@ -66,7 +67,7 @@ export class CSVParser {
 
     } catch (error) {
       console.error('❌ Erro no parsing CSV:', error)
-      throw new Error(`Falha no parsing CSV: ${error instanceof Error ? error.message : 'Erro desconhecido'}`)
+      throw new Error('Falha no parsing CSV: ' + (error instanceof Error ? error.message : 'Erro desconhecido'))
     }
   }
 
@@ -88,7 +89,7 @@ export class CSVParser {
       }
     }
 
-    console.log(`🔍 Delimitador detectado: '${bestDelimiter}' (${maxColumns} colunas)`)
+    console.log('🔍 Delimitador detectado: \'' + bestDelimiter + '\' (' + maxColumns + ' colunas)')
     return bestDelimiter
   }
 
@@ -144,7 +145,7 @@ export class CSVParser {
       }
 
       if (!result[field] && ['date', 'description', 'amount'].includes(field)) {
-        this.warnings.push(`Campo obrigatório '${field}' não encontrado`)
+        this.warnings.push('Campo obrigatório \'' + field + '\' não encontrado')
       }
     }
 
@@ -166,7 +167,7 @@ export class CSVParser {
           transactions.push(transaction)
         }
       } catch (error) {
-        this.errors.push(`Linha ${i + 1}: ${error instanceof Error ? error.message : 'Erro desconhecido'}`)
+        this.errors.push('Linha ' + (i + 1) + ': ' + (error instanceof Error ? error.message : 'Erro desconhecido'))
       }
     }
 
@@ -207,13 +208,13 @@ export class CSVParser {
     // Processar data
     const date = this.parseDate(dateField)
     if (!date) {
-      throw new Error(`Data inválida: ${dateField}`)
+      throw new Error('Data inválida: ' + dateField)
     }
 
     // Processar valor
     const amountResult = this.parseAmount(amountField)
     if (amountResult.amount === null) {
-      throw new Error(`Valor inválido: ${amountField}`)
+      throw new Error('Valor inválido: ' + amountField)
     }
 
     // Processar tipo
@@ -315,8 +316,21 @@ export class CSVParser {
     if (hasBrazilianFormat) {
       // Formato brasileiro: 1.234.567,89
       cleaned = cleaned.replace(/\./g, '').replace(',', '.')
+    } else {
+      // Formato americano: 1,234,567.89
+      // Remove vírgulas que são separadores de milhares
+      if (cleaned.includes(',') && cleaned.includes('.')) {
+        const lastCommaIndex = cleaned.lastIndexOf(',')
+        const lastDotIndex = cleaned.lastIndexOf('.')
+        if (lastDotIndex > lastCommaIndex) {
+          // Dot é decimal, remover vírgulas
+          cleaned = cleaned.replace(/,/g, '')
+        } else {
+          // Comma é decimal, remover dots
+          cleaned = cleaned.replace(/\./g, '').replace(',', '.')
+        }
+      }
     }
-    // Senão, assumir formato americano ou já correto
 
     const amount = parseFloat(cleaned)
     
@@ -324,59 +338,53 @@ export class CSVParser {
       return { amount: null, originalSign }
     }
 
-    return { 
-      amount: originalSign === '-' ? -amount : amount, 
-      originalSign 
-    }
+    return { amount: originalSign === '-' ? -amount : amount, originalSign }
   }
 
   private parseType(typeField: string | null, amount: number, originalSign: string): 'debit' | 'credit' {
+    // Se há campo de tipo específico, usar ele
     if (typeField && typeof typeField === 'string') {
-      const type = typeField.toLowerCase().trim()
-      if (type.includes('débito') || type.includes('debito') || type.includes('d')) {
-        return 'debit'
-      }
-      if (type.includes('crédito') || type.includes('credito') || type.includes('c')) {
+      const normalized = typeField.toLowerCase().trim()
+      if (normalized.includes('credit') || normalized.includes('entrada') || normalized.includes('deposito')) {
         return 'credit'
+      }
+      if (normalized.includes('debit') || normalized.includes('saida') || normalized.includes('saque')) {
+        return 'debit'
       }
     }
 
-    // Fallback: usar o sinal do valor
-    return amount < 0 || originalSign === '-' ? 'debit' : 'credit'
+    // Usar sinal do valor como fallback
+    return amount >= 0 ? 'credit' : 'debit'
   }
 
   private cleanDescription(description: string): string {
-    if (!description || typeof description !== 'string') return 'Transação sem descrição'
+    if (!description || typeof description !== 'string') {
+      return 'Transação sem descrição'
+    }
 
     return description
       .trim()
       .replace(/\s+/g, ' ')
-      .replace(/[^\w\s\-áâãàéêíóôõúç]/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .toUpperCase()
+      .replace(/[^\w\s\-\.\,\(\)]/g, '')
+      .substring(0, 200) // Limitar tamanho
   }
 
   private calculateConfidence(date: Date, description: string, amount: number): number {
-    let confidence = 0.5 // Base confidence
+    let confidence = 0.5 // Base
 
-    // Data válida e recente
-    const now = new Date()
-    const diffYears = now.getFullYear() - date.getFullYear()
-    if (diffYears >= 0 && diffYears <= 5) {
+    // Aumentar confiança baseado na qualidade dos dados
+    if (date && !isNaN(date.getTime())) {
       confidence += 0.2
     }
 
-    // Descrição não vazia e com conteúdo
-    if (description && description.length > 3) {
+    if (description && description.length > 5) {
       confidence += 0.2
     }
 
-    // Valor não zero
-    if (amount !== 0) {
+    if (!isNaN(amount) && amount !== 0) {
       confidence += 0.1
     }
 
-    return Math.min(1, Math.max(0, confidence))
+    return Math.min(1.0, confidence)
   }
 }

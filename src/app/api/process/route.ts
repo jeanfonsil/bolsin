@@ -202,6 +202,37 @@ async function processWithMockData(fileId: string) {
   
   const totalTransactions = Object.values(mockCategories).reduce((a, b) => a + b, 0)
   const avgConfidence = 0.75
+
+  // Salvar dados processados para download
+if (typeof global !== 'undefined') {
+  if (!global.processedDataStore) {
+    global.processedDataStore = new Map()
+  }
+  
+  const mockTransactions = Object.entries(mockCategories).flatMap(([category, count]) =>
+    Array(count).fill({
+      date: new Date(),
+      description: `Mock ${category}`,
+      amount: 100,
+      type: 'debit',
+      category,
+      aiConfidence: avgConfidence
+    })
+  )
+  
+  // Salvar dados completos para download
+  global.processedDataStore.set(fileId, {
+    transactions: mockTransactions,
+    metadata: { totalRows: totalTransactions, successfulRows: totalTransactions },
+    transactionCount: totalTransactions,
+    categoryStats: mockCategories,
+    avgConfidence,
+    processingTime: Date.now(),
+    source: 'mock-data'
+  })
+  
+  console.log('💾 Dados processados salvos para download')
+}
   
   return NextResponse.json({
     success: true,
