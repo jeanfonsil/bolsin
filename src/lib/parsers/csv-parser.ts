@@ -362,10 +362,12 @@ export class CSVParser {
       return 'Transação sem descrição'
     }
 
+    // Preservar acentos e caracteres unicode, removendo apenas controles
     return description
+      .normalize('NFC')
       .trim()
       .replace(/\s+/g, ' ')
-      .replace(/[^\w\s\-\.\,\(\)]/g, '')
+      .replace(/[\u0000-\u001F\u007F]/g, '') // remover caracteres de controle
       .substring(0, 200) // Limitar tamanho
   }
 

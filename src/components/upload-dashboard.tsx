@@ -46,6 +46,24 @@ export default function UploadDashboard() {
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [dragActive, setDragActive] = useState(false)
 
+  // Corrige datas no download evitando timezone shift (YYYY-MM-DD)
+  const formatDateForCSV = (input: any): string => {
+    if (!input) return ''
+    if (typeof input === 'string') {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
+        const [y, m, d] = input.split('-')
+        return `${d}/${m}/${y}`
+      }
+      const dt = new Date(input)
+      if (!isNaN(dt.getTime())) return dt.toLocaleDateString('pt-BR')
+      return input
+    }
+    if (input instanceof Date) {
+      return input.toLocaleDateString('pt-BR')
+    }
+    return String(input)
+  }
+
 const processFile = useCallback(async (file: File) => {
   console.log('🚨 === DEBUG UPLOAD/PROCESS ===')
   console.log('📤 Arquivo recebido:', file.name, file.size, 'bytes', file.type)
@@ -242,102 +260,57 @@ const processFile = useCallback(async (file: File) => {
   }
 }, [])
 
-// 2️⃣ FUNÇÃO downloadExtract COM DEBUG:
+// Download real do CSV (sem debug)
 const downloadExtract = async (fileId: string) => {
-  console.log('🚨 === DEBUG DOWNLOAD ===')
-  console.log('📥 FileId para download:', fileId)
   
   try {
     const fileData = files.find(f => f.id === fileId)
-    console.log('🚨 FileData local encontrado:', !!fileData)
-    console.log('🚨 FileData completo:', JSON.stringify(fileData, null, 2))
     
     if (!fileData) {
       throw new Error('Arquivo não encontrado')
     }
 
-    console.log('🚨 Status do arquivo:', fileData.status)
-    console.log('🚨 Tem aiAnalysis?', !!fileData.aiAnalysis)
-    console.log('🚨 Tem sampleTransactions?', !!fileData.aiAnalysis?.sampleTransactions)
-    console.log('🚨 Quantidade sampleTransactions:', fileData.aiAnalysis?.sampleTransactions?.length)
-
     if (fileData.status !== 'completed') {
-      alert('❌ Arquivo ainda não foi processado')
+      alert('Arquivo ainda não foi processado')
       return
     }
 
     let csvData: any[] = []
 
-    // STEP 1: TENTAR BUSCAR DADOS DA API DOWNLOAD
-    console.log('🚨 Buscando dados da API /download...')
+    // Buscar dados da API de download (reprocessa do arquivo)
     try {
       const response = await fetch('/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId })
       })
-
-      console.log('🚨 Response /download status:', response.status)
       
       if (response.ok) {
         const downloadData = await response.json()
-        console.log('🚨 Dados da API download:', downloadData)
-        console.log('🚨 Sucesso?', downloadData.success)
-        console.log('🚨 Fonte:', downloadData.source)
-        console.log('🚨 Transações API:', downloadData.data?.transactions?.length)
         
         if (downloadData.success && downloadData.data?.transactions) {
-          console.log('🚨 PRIMEIRA TRANSAÇÃO DA API:', downloadData.data.transactions[0])
-          
           csvData = downloadData.data.transactions.map((transaction: any, index: number) => ({
             'ID': index + 1,
-            'Data': new Date(transaction.date).toLocaleDateString('pt-BR'),
+            'Data': formatDateForCSV(transaction.date),
             'Descrição': transaction.description,
             'Valor': `R$ ${Math.abs(transaction.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
             'Tipo': transaction.type === 'debit' ? 'Débito' : 'Crédito',
             'Categoria': transaction.category || 'Outros',
-            'Confiança IA': `${((transaction.confidence || transaction.aiConfidence || 0) * 100).toFixed(1)}%`,
-            'Processado em': new Date().toLocaleString('pt-BR'),
-            'DEBUG_ORIGINAL': JSON.stringify(transaction)
+            'Confiança IA': `${((transaction.confidence || transaction.aiConfidence || 0) * 100).toFixed(1)}%`
           }))
-          
-          console.log('🚨 DADOS CSV PREPARADOS (primeiros 3):')
-          csvData.slice(0, 3).forEach((row, i) => {
-            console.log(`   [${i}]:`, row)
-          })
         }
       }
     } catch (apiError) {
-      console.log('🚨 ERRO API download:', apiError)
+      console.log('Erro ao baixar dados:', apiError)
     }
 
-    // STEP 2: SE API FALHOU, USAR DADOS LOCAIS
-    if (csvData.length === 0 && fileData.aiAnalysis?.sampleTransactions) {
-      console.log('🚨 Usando dados locais sampleTransactions...')
-      console.log('🚨 Dados locais:', fileData.aiAnalysis.sampleTransactions)
-      
-      csvData = fileData.aiAnalysis.sampleTransactions.map((transaction: any, index: number) => ({
-        'ID': index + 1,
-        'Data': new Date(transaction.date).toLocaleDateString('pt-BR'),
-        'Descrição': transaction.description,
-        'Valor': `R$ ${Math.abs(transaction.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-        'Tipo': transaction.type === 'debit' ? 'Débito' : 'Crédito',
-        'Categoria': transaction.category || 'Outros',
-        'Confiança IA': `${((transaction.confidence || 0) * 100).toFixed(1)}%`,
-        'Processado em': new Date().toLocaleString('pt-BR'),
-        'DEBUG_LOCAL': 'dados-locais'
-      }))
-    }
+    // Sem fallback local: download deve refletir o arquivo original
 
     // VERIFICAÇÃO FINAL
     if (csvData.length === 0) {
-      console.log('🚨 NENHUM DADO ENCONTRADO!')
-      alert('❌ Nenhum dado processado encontrado!')
+      alert('Nenhum dado processado encontrado no download.')
       return
     }
-
-    console.log(`🚨 TOTAL DE ${csvData.length} TRANSAÇÕES PARA DOWNLOAD`)
-    console.log('🚨 Primeira linha do CSV:', csvData[0])
 
     // Gerar CSV
     const headers = Object.keys(csvData[0])
@@ -354,7 +327,7 @@ const downloadExtract = async (fileId: string) => {
       )
     ].join('\n')
 
-    const BOM = '\uFEFF'
+    const BOM = '\uFEFF' // mantém UTF-8 com BOM para Excel
     const finalContent = BOM + csvContent
 
     // Download
@@ -372,7 +345,7 @@ const downloadExtract = async (fileId: string) => {
     
     setTimeout(() => URL.revokeObjectURL(link.href), 100)
 
-    alert(`🚨 Download DEBUG concluído!\n\n📊 ${csvData.length} transações\n📁 ${fileName}`)
+    // Notificação opcional removida; download silencioso e real
 
   } catch (error) {
     console.error('🚨 ERRO DOWNLOAD:', error)
@@ -780,7 +753,7 @@ const downloadExtract = async (fileId: string) => {
                           </div>
                           
                           <div className="flex space-x-2">
-                            <Button size="sm" className="bg-green-600 hover:bg-green-700">
+                            <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => downloadExtract(file.id)}>
                               <Download className="h-4 w-4 mr-1" />
                               Baixar Planilha
                             </Button>

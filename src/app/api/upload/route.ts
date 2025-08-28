@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
+import fs from 'fs'
+import path from 'path'
+
+export const runtime = 'nodejs'
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
 const ALLOWED_TYPES = [
@@ -91,7 +95,22 @@ export async function POST(request: NextRequest) {
       console.log('📄 Preview:', originalContent.substring(0, 200) + '...')
     }
 
-    console.log('7️⃣ Salvando em memória GLOBAL...')
+    console.log('7️⃣ Salvando em memória GLOBAL e em DISCO...')
+    
+    // Persistir em disco (dev / node runtime)
+    try {
+      const uploadDir = path.join(process.cwd(), 'uploads')
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true })
+      }
+      const ext = getFileExtension(file.name)
+      const diskFileName = `${fileId}.${ext}`
+      const diskPath = path.join(uploadDir, diskFileName)
+      fs.writeFileSync(diskPath, buffer)
+      console.log('💾 Arquivo salvo em disco:', diskPath)
+    } catch (diskErr) {
+      console.error('❌ Falha ao salvar arquivo em disco:', diskErr)
+    }
     
     const metadata = {
       id: fileId,

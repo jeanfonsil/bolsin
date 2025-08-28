@@ -1,6 +1,11 @@
 // CRIAR NOVO ARQUIVO: src/app/api/download/route.ts
 
 import { NextRequest, NextResponse } from 'next/server'
+import fs from 'fs'
+import path from 'path'
+import { categorizeTransactions } from '@/lib/ai/categorization'
+
+export const runtime = 'nodejs'
 
 // Usar o mesmo store da API upload/process
 declare global {
@@ -36,142 +41,86 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    console.log('🔍 Buscando dados processados para:', fileId)
-
-    // Primeiro, tentar buscar dados processados salvos
-    const processedData = processedDataStore.get(fileId)
-    
-    if (processedData) {
-      console.log('✅ Dados processados encontrados no cache')
-      return NextResponse.json({
-        success: true,
-        data: processedData,
-        source: 'processed_cache'
-      })
-    }
+    console.log('🔍 Preparando dados REAIS para download:', fileId)
 
     // Se não tiver cache, tentar reprocessar o arquivo
-    const fileData = fileStore.get(fileId)
-    
+    let fileData = fileStore.get(fileId)
+
+    // Se não houver em memória, buscar em disco
     if (!fileData) {
-      console.log('❌ Arquivo não encontrado')
-      return NextResponse.json(
-        { error: 'Arquivo não encontrado' },
-        { status: 404 }
-      )
+      const uploadDir = path.join(process.cwd(), 'uploads')
+      try {
+        if (fs.existsSync(uploadDir)) {
+          const candidate = fs.readdirSync(uploadDir).find(fn => fn.startsWith(fileId))
+          if (candidate) {
+            const diskPath = path.join(uploadDir, candidate)
+            const ext = candidate.split('.').pop()
+            const buffer = fs.readFileSync(diskPath)
+            fileData = {
+              buffer,
+              metadata: {
+                fileType: ext === 'csv' ? 'csv' : ext === 'pdf' ? 'pdf' : 'unknown',
+                fileName: candidate,
+                id: fileId
+              }
+            }
+          }
+        }
+      } catch (diskErr) {
+        console.error('❌ Erro ao buscar arquivo em disco:', diskErr)
+      }
     }
 
-    console.log('🔄 Reprocessando arquivo para download...')
-    
-    // Simular reprocessamento (ou chamar o CSV Parser novamente)
-    if (fileData.metadata.fileType === 'csv') {
+    if (fileData && fileData.metadata.fileType === 'csv') {
       try {
-        // Importar e usar o CSV Parser
         const { CSVParser } = await import('@/lib/parsers/csv-parser')
         const parser = new CSVParser()
-        
-        const csvContent = fileData.buffer.toString('utf-8')
+        // Decodificar buffer tentando UTF-8 e caindo para Latin-1
+        const decodeBuffer = (buf: Buffer): string => {
+          const utf8Text = buf.toString('utf-8')
+          const looksBroken = /Ã|Â|�/.test(utf8Text)
+          if (looksBroken) {
+            const latinText = buf.toString('latin1')
+            const latinArtifacts = (latinText.match(/Ã|Â|�/g) || []).length
+            const utf8Artifacts = (utf8Text.match(/Ã|Â|�/g) || []).length
+            return latinArtifacts < utf8Artifacts ? latinText : utf8Text
+          }
+          return utf8Text
+        }
+        const csvContent = decodeBuffer(fileData.buffer)
         const parseResult = await parser.parseCSV(csvContent)
-        
+
         if (parseResult.transactions.length > 0) {
           console.log(`✅ Reprocessamento concluído: ${parseResult.transactions.length} transações`)
-          
+          // Categorização em tempo de download para manter "real" sem cache
+          const descriptions = parseResult.transactions.map(t => t.description)
+          const categorized = await categorizeTransactions(descriptions)
           const downloadData = {
-            transactions: parseResult.transactions.map(t => ({
-              ...t,
-              category: 'Outros', // Categoria padrão se IA não disponível
-              confidence: t.confidence,
-              aiConfidence: t.confidence
+            transactions: parseResult.transactions.map((t, i) => ({
+              date: t.date.toISOString().split('T')[0],
+              description: t.description?.normalize('NFC'),
+              amount: t.amount,
+              type: t.type,
+              category: categorized[i]?.category || 'Outros',
+              confidence: categorized[i]?.confidence ?? t.confidence,
+              aiConfidence: categorized[i]?.confidence ?? t.confidence,
+              originalAmount: t.originalAmount
             })),
             metadata: parseResult.metadata,
             transactionCount: parseResult.transactions.length
           }
-          
-          // Salvar no cache para próximas requisições
-          processedDataStore.set(fileId, downloadData)
-          
-          return NextResponse.json({
-            success: true,
-            data: downloadData,
-            source: 'reprocessed'
-          })
+          return NextResponse.json({ success: true, data: downloadData, source: 'reprocessed' })
         }
       } catch (parseError) {
         console.error('❌ Erro no reprocessamento:', parseError)
+        return NextResponse.json({ success: false, error: 'Erro ao parsear CSV para download', message: parseError instanceof Error ? parseError.message : 'Erro desconhecido' }, { status: 422 })
       }
     }
-
-    // Fallback: dados simulados baseados no tipo do arquivo
-    console.log('📊 Gerando dados simulados para download...')
-    
-    const mockTransactions = [
-      {
-        date: new Date('2024-08-15'),
-        description: 'Padaria São João',
-        amount: 15.50,
-        type: 'debit',
-        category: 'Alimentação',
-        confidence: 0.85,
-        aiConfidence: 0.85,
-        originalAmount: '-15.50'
-      },
-      {
-        date: new Date('2024-08-14'),
-        description: 'PIX recebido João Silva',
-        amount: 200.00,
-        type: 'credit',
-        category: 'Transferência',
-        confidence: 0.92,
-        aiConfidence: 0.92,
-        originalAmount: '+200.00'
-      },
-      {
-        date: new Date('2024-08-13'),
-        description: 'Uber viagem centro',
-        amount: 12.80,
-        type: 'debit',
-        category: 'Transporte',
-        confidence: 0.88,
-        aiConfidence: 0.88,
-        originalAmount: '-12.80'
-      },
-      {
-        date: new Date('2024-08-12'),
-        description: 'Supermercado Extra',
-        amount: 85.30,
-        type: 'debit',
-        category: 'Alimentação',
-        confidence: 0.90,
-        aiConfidence: 0.90,
-        originalAmount: '-85.30'
-      },
-      {
-        date: new Date('2024-08-11'),
-        description: 'Netflix mensalidade',
-        amount: 49.90,
-        type: 'debit',
-        category: 'Lazer',
-        confidence: 0.95,
-        aiConfidence: 0.95,
-        originalAmount: '-49.90'
-      }
-    ]
-
-    const downloadData = {
-      transactions: mockTransactions,
-      metadata: {
-        detectedBank: 'nubank',
-        totalRows: mockTransactions.length,
-        successfulRows: mockTransactions.length
-      },
-      transactionCount: mockTransactions.length
+    // Sem uso de cache aqui: download deve refletir o arquivo original
+    if (!fileData) {
+      return NextResponse.json({ success: false, error: 'Arquivo não encontrado' }, { status: 404 })
     }
-
-    return NextResponse.json({
-      success: true,
-      data: downloadData,
-      source: 'mock_fallback'
-    })
+    return NextResponse.json({ success: false, error: 'Tipo de arquivo não suportado para download' }, { status: 415 })
 
   } catch (error) {
     console.error('❌ Erro na API download:', error)

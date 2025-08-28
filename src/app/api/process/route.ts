@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { categorizeTransactions } from '@/lib/ai/categorization'
 import { CSVParser } from '@/lib/parsers/csv-parser'
+import fs from 'fs'
+import path from 'path'
+
+export const runtime = 'nodejs'
 
 // Store em memória para acessar arquivos
 declare global {
@@ -45,40 +49,52 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       )
     }
 
-    // Debug: Verificar se existe exatamente
-    const exists = fileStore.has(fileId)
-    console.log('🔍 Arquivo existe no store?', exists)
-    
-    if (!exists) {
-      console.log('❌ PROBLEMA CRÍTICO: FileId não encontrado no store!')
-      console.log('📋 FileId procurado:', JSON.stringify(fileId))
-      console.log('📋 IDs disponíveis:', JSON.stringify(storeKeys))
-      
-      // Verificar se existe com prefixo/sufixo diferente
-      const similarKeys = storeKeys.filter(key => 
-        key.includes(fileId.toString()) || fileId.toString().includes(key)
-      )
-      console.log('🔍 IDs similares encontrados:', similarKeys)
-      
+    // Buscar arquivo no store em memória
+    let fileData = fileStore.get(fileId)
+    let diskPath: string | null = null
+    let diskExt: string | null = null
+
+    // Se não estiver na memória, tentar localizar em DISCO
+    if (!fileData) {
+      const uploadDir = path.join(process.cwd(), 'uploads')
+      try {
+        if (fs.existsSync(uploadDir)) {
+          const candidate = fs.readdirSync(uploadDir).find(fn => fn.startsWith(fileId))
+          if (candidate) {
+            diskPath = path.join(uploadDir, candidate)
+            diskExt = candidate.split('.').pop() || null
+            console.log('📁 Arquivo encontrado em DISCO:', diskPath)
+            const buffer = fs.readFileSync(diskPath)
+            fileData = {
+              buffer,
+              metadata: {
+                originalName: candidate,
+                fileType: (diskExt === 'csv' ? 'csv' : diskExt === 'pdf' ? 'pdf' : 'unknown'),
+                fileName: candidate,
+                id: fileId
+              }
+            }
+          }
+        }
+      } catch (diskErr) {
+        console.error('❌ Erro ao buscar arquivo em disco:', diskErr)
+      }
+    }
+
+    // Se ainda não tiver, reportar erro claro
+    if (!fileData) {
+      console.log('❌ Arquivo não encontrado nem em memória nem em disco')
       return NextResponse.json({
         success: false,
-        error: 'Arquivo não encontrado',
+        error: 'Arquivo não encontrado para processamento',
         debug: {
           requestedId: fileId,
           availableIds: storeKeys,
-          similarIds: similarKeys,
-          storeSize: fileStore.size
+          uploadDir: path.join(process.cwd(), 'uploads')
         }
       }, { status: 404 })
     }
-
-    // Buscar arquivo no store em memória
-    const fileData = fileStore.get(fileId)
-    
-    if (!fileData) {
-      console.log('❌ Arquivo não encontrado no store após verificação')
-      return processWithMockData(fileId)
-    }
+    // Já garantimos acima que existe, então não repetir verificação
 
     console.log('✅ Arquivo encontrado:', fileData.metadata?.originalName)
     console.log('📊 Tipo de arquivo:', fileData.metadata?.fileType)
@@ -88,11 +104,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (fileData.metadata?.fileType === 'csv') {
       return await processCSVFile(fileId, fileData)
     } else if (fileData.metadata?.fileType === 'pdf') {
-      console.log('⚠️ PDF parsing não implementado ainda, usando dados simulados')
-      return processWithMockData(fileId)
+      console.log('⚠️ PDF parsing não implementado')
+      return NextResponse.json({ success: false, error: 'PDF não suportado no momento' }, { status: 415 })
     } else {
-      console.log('⚠️ Tipo de arquivo não suportado, usando dados simulados')
-      return processWithMockData(fileId)
+      console.log('⚠️ Tipo de arquivo não suportado')
+      return NextResponse.json({ success: false, error: 'Tipo de arquivo não suportado' }, { status: 415 })
     }
 
   } catch (error) {
@@ -119,9 +135,24 @@ async function processCSVFile(fileId: string, fileData: any): Promise<NextRespon
   console.log('📂 Buffer length:', fileData?.buffer?.length)
   console.log('📊 Metadata:', JSON.stringify(fileData?.metadata, null, 2))
   
+  // Decodificar buffer tentando UTF-8 e caindo para Latin-1 (Windows-1252)
+  const decodeBuffer = (buf: Buffer): string => {
+    const utf8Text = buf.toString('utf-8')
+    // Heurística simples: presença de artefatos comuns de má decodificação
+    const looksBroken = /Ã|Â|�/.test(utf8Text)
+    if (looksBroken) {
+      const latinText = buf.toString('latin1')
+      // Preferir latin1 se parecer mais legível (menos artefatos)
+      const latinArtifacts = (latinText.match(/Ã|Â|�/g) || []).length
+      const utf8Artifacts = (utf8Text.match(/Ã|Â|�/g) || []).length
+      return latinArtifacts < utf8Artifacts ? latinText : utf8Text
+    }
+    return utf8Text
+  }
+
   try {
-    // Converter buffer para string
-    const csvContent = fileData.buffer.toString('utf-8')
+    // Converter buffer para string com detecção simples de encoding
+    const csvContent = decodeBuffer(fileData.buffer)
     console.log('🚨 CONTEÚDO CSV REAL:')
     console.log('📄 Tamanho:', csvContent.length, 'caracteres')
     console.log('📄 Primeiras 500 chars:', csvContent.substring(0, 500))
@@ -285,78 +316,8 @@ async function processCSVFile(fileId: string, fileData: any): Promise<NextRespon
 
   } catch (parseError) {
     console.log('🚨 ERRO NO PARSING:', parseError)
-    console.log('🔄 Fallback para dados simulados')
-    return processWithMockData(fileId)
+    return NextResponse.json({ success: false, error: 'Erro ao parsear CSV', message: parseError instanceof Error ? parseError.message : 'Erro desconhecido' }, { status: 422 })
   }
-}
-
-function processWithMockData(fileId: string): NextResponse {
-  console.log('🚨 USANDO DADOS SIMULADOS - ALGO DEU ERRADO!')
-  
-  const mockCategories = {
-    'Alimentação': 4,
-    'Transporte': 3, 
-    'Lazer': 2,
-    'Saúde': 1,
-    'Moradia': 2,
-    'Outros': 1
-  }
-  
-  const totalTransactions = Object.values(mockCategories).reduce((a, b) => a + b, 0)
-  const avgConfidence = 0.75
-
-  // Criar mockTransactions corretamente
-  const mockTransactions = Object.entries(mockCategories).flatMap(([category, count]) =>
-    Array(count).fill(null).map((_, index) => ({
-      date: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000),
-      description: `Mock ${category} #${index + 1}`,
-      amount: Math.round((Math.random() * 200 + 10) * 100) / 100,
-      type: 'debit' as const,
-      category,
-      aiConfidence: avgConfidence,
-      confidence: avgConfidence
-    }))
-  )
-
-  // Salvar dados simulados para download
-  processedDataStore.set(fileId, {
-    transactions: mockTransactions,
-    metadata: { 
-      totalRows: totalTransactions, 
-      successfulRows: totalTransactions,
-      detectedBank: 'mock'
-    },
-    transactionCount: totalTransactions,
-    categoryStats: mockCategories,
-    avgConfidence,
-    processingTime: Date.now(),
-    source: 'mock-data'
-  })
-  
-  console.log('💾 Dados simulados salvos para download:', mockTransactions.length)
-  
-  return NextResponse.json({
-    success: true,
-    data: {
-      fileId,
-      transactionCount: totalTransactions,
-      categories: Object.keys(mockCategories),
-      categoryDistribution: mockCategories,
-      averageConfidence: avgConfidence,
-      processingTime: 2800,
-      status: 'completed',
-      mode: 'fallback-mock-data',
-      // Incluir transações simuladas também
-      sampleTransactions: mockTransactions.map(t => ({
-        date: t.date.toISOString().split('T')[0],
-        description: t.description,
-        amount: t.amount,
-        type: t.type,
-        category: t.category,
-        confidence: t.confidence
-      }))
-    }
-  })
 }
 
 // Health check endpoint
