@@ -1,33 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { MonitoringService } from '@/lib/monitoring/monitoring'
-import { getFileStore } from '@/lib/server/file-store'
 import crypto from 'crypto'
-import fs from 'fs'
-import path from 'path'
+import { getFileStore } from '@/lib/server/file-store'
 
 export const runtime = 'nodejs'
 
-const fileStore = getFileStore()
+// Store simples em memória para debug
+declare global {
+  var debugFileStore: Map<string, any> | undefined
+}
+
+if (!global.debugFileStore) {
+  global.debugFileStore = new Map()
+}
 
 export async function POST(request: NextRequest) {
-  const monitoring = MonitoringService.getInstance()
-  const fileId = crypto.randomUUID()
-
-  monitoring.startProcess(fileId, 'upload')
-
+  console.log('🚨 === UPLOAD API DEBUG ===')
+  
   try {
+    console.log('📥 Recebendo request...')
+    
     const formData = await request.formData()
+    console.log('📋 FormData recebido:', Array.from(formData.entries()).map(([key, value]) => 
+      [key, value instanceof File ? `File(${value.name}, ${value.size}b)` : value]
+    ))
+    
     const file = formData.get('file') as File | null
+    console.log('📁 Arquivo extraído:', file ? {
+      name: file.name,
+      size: file.size,
+      type: file.type
+    } : 'null')
 
     if (!file) {
-      const error = 'Nenhum arquivo enviado'
-      monitoring.errorProcess(fileId, 'upload', error, {
-        errorType: 'validation_error',
-        step: 'file_validation'
-      })
-      return NextResponse.json({ success: false, error }, { status: 400 })
+      console.error('❌ Nenhum arquivo enviado')
+      const errorResponse = { success: false, error: 'Nenhum arquivo enviado' }
+      console.log('📤 Retornando erro:', errorResponse)
+      return NextResponse.json(errorResponse, { status: 400 })
     }
 
+    // Validações básicas
     const maxSize = 10 * 1024 * 1024 // 10MB
     const validTypes = [
       'application/pdf',
@@ -36,28 +47,30 @@ export async function POST(request: NextRequest) {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     ]
 
+    console.log('🔍 Validando arquivo...')
+    console.log('📏 Tamanho:', file.size, 'vs máximo:', maxSize)
+    console.log('📄 Tipo:', file.type, 'válido:', validTypes.includes(file.type))
+
     if (file.size > maxSize) {
-      const error = 'Arquivo muito grande. Máximo 10MB.'
-      monitoring.errorProcess(fileId, 'upload', error, {
-        errorType: 'size_error',
-        fileSize: file.size,
-        fileName: file.name
-      })
-      return NextResponse.json({ success: false, error }, { status: 413 })
+      const errorResponse = { success: false, error: 'Arquivo muito grande. Máximo 10MB.' }
+      console.log('📤 Retornando erro de tamanho:', errorResponse)
+      return NextResponse.json(errorResponse, { status: 413 })
     }
 
     if (!validTypes.includes(file.type)) {
-      const error = 'Tipo de arquivo não suportado. Use PDF, CSV, XLS ou XLSX.'
-      monitoring.errorProcess(fileId, 'upload', error, {
-        errorType: 'type_error',
-        fileType: file.type,
-        fileName: file.name
-      })
-      return NextResponse.json({ success: false, error }, { status: 415 })
+      const errorResponse = { success: false, error: 'Tipo de arquivo não suportado. Use PDF, CSV, XLS ou XLSX.' }
+      console.log('📤 Retornando erro de tipo:', errorResponse)
+      return NextResponse.json(errorResponse, { status: 415 })
     }
 
+    // Gerar ID e processar arquivo
+    const fileId = crypto.randomUUID()
+    console.log('🆔 FileId gerado:', fileId)
+
     // Ler arquivo
+    console.log('📖 Lendo buffer do arquivo...')
     const buffer = Buffer.from(await file.arrayBuffer())
+    console.log('💾 Buffer lido:', buffer.length, 'bytes')
 
     const metadata = {
       originalName: file.name,
@@ -66,67 +79,76 @@ export async function POST(request: NextRequest) {
       size: file.size,
       uploadedAt: new Date().toISOString()
     }
+    console.log('📊 Metadata criado:', metadata)
 
     // Salvar em memória
-    fileStore.set(fileId, { buffer, metadata })
+    const store = getFileStore(); store.set(fileId, { buffer, metadata }); console.log('Arquivo salvo no store. Total de arquivos:', store.size)
+    console.log('💾 Arquivo salvo no store. Total de arquivos:', global.debugFileStore!.size)
 
-    // Backup em disco (best-effort)
-    try {
-      const uploadDir = path.join(process.cwd(), 'uploads')
-      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true })
-      const ext = getFileExtension(file.name)
-      const diskPath = path.join(uploadDir, `${fileId}.${ext}`)
-      fs.writeFileSync(diskPath, buffer)
-    } catch (diskError) {
-      console.error('Erro ao salvar backup em disco:', diskError)
-    }
-
-    monitoring.completeProcess(fileId, 'upload', {
-      fileName: file.name,
-      fileSize: file.size,
-      fileType: metadata.fileType,
-      uploadedAt: metadata.uploadedAt
-    })
-
-    return NextResponse.json({
+    // ✅ Construir resposta EXATA
+    const responseData = {
       success: true,
       data: {
-        fileId,
+        fileId: fileId,
         originalName: file.name,
         size: file.size,
         type: metadata.fileType,
         uploadedAt: metadata.uploadedAt,
-        validation: { warnings: [] }
+        validation: { 
+          warnings: [] as string[]
+        }
       }
-    })
+    }
+
+    console.log('✅ Resposta construída:', JSON.stringify(responseData, null, 2))
+    console.log('🔍 responseData.success:', responseData.success)
+    console.log('🔍 responseData.data:', responseData.data)
+    console.log('🔍 responseData.data.fileId:', responseData.data.fileId)
+
+    const response = NextResponse.json(responseData)
+    console.log('📤 Enviando resposta...')
+    
+    return response
+
   } catch (error) {
-    console.error('Erro no upload:', error)
-    monitoring.errorProcess(fileId, 'upload', error instanceof Error ? error.message : 'Erro desconhecido', {
-      errorType: 'upload_error',
-      step: 'processing'
-    })
-    return NextResponse.json(
-      { success: false, error: 'Erro interno no upload', message: error instanceof Error ? error.message : 'Erro desconhecido' },
-      { status: 500 }
-    )
+    console.error('💥 ERRO CRÍTICO no upload:', error)
+    console.error('📊 Stack trace:', error instanceof Error ? error.stack : 'No stack')
+    
+    const errorResponse = {
+      success: false,
+      error: 'Erro interno no upload',
+      message: error instanceof Error ? error.message : 'Erro desconhecido',
+      debug: {
+        errorType: error?.constructor?.name || 'Unknown',
+        errorMessage: error instanceof Error ? error.message : String(error)
+      }
+    }
+    
+    console.log('📤 Retornando erro crítico:', errorResponse)
+    return NextResponse.json(errorResponse, { status: 500 })
   }
 }
 
 export async function GET() {
-  try {
-    return NextResponse.json({
-      message: 'Upload API funcionando',
-      filesInMemory: fileStore.size,
+  console.log('🔍 GET /api/upload - Health check')
+  
+  const healthData = {
+    success: true,
+    message: 'Upload API funcionando',
+    debug: {
+      filesInMemory: getFileStore().size,
       supportedTypes: [
         'text/csv',
         'application/pdf',
         'application/vnd.ms-excel',
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      ]
-    })
-  } catch (error) {
-    return NextResponse.json({ error: 'Erro ao verificar status' }, { status: 500 })
+      ],
+      timestamp: new Date().toISOString()
+    }
   }
+  
+  console.log('📤 Health check response:', healthData)
+  return NextResponse.json(healthData)
 }
 
 function getFileTypeFromMime(mimeType: string): string {
@@ -136,10 +158,7 @@ function getFileTypeFromMime(mimeType: string): string {
     'application/vnd.ms-excel': 'xls',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx'
   }
-  return mapping[mimeType as keyof typeof mapping] || 'unknown'
+  const result = mapping[mimeType as keyof typeof mapping] || 'unknown'
+  console.log('🔄 Conversão MIME:', mimeType, '->', result)
+  return result
 }
-
-function getFileExtension(filename: string): string {
-  return filename.split('.').pop() || 'unknown'
-}
-

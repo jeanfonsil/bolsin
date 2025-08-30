@@ -52,10 +52,12 @@ export function MonitoringDashboard() {
 
   useEffect(() => {
     checkHealth()
-    
+    let interval: ReturnType<typeof setInterval> | undefined
     if (autoRefresh) {
-      const interval = setInterval(checkHealth, 30000) // A cada 30s
-      return () => clearInterval(interval)
+      interval = setInterval(checkHealth, 30000)
+    }
+    return () => {
+      if (interval) clearInterval(interval)
     }
   }, [autoRefresh])
 

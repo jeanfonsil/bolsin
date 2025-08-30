@@ -1,21 +1,36 @@
-// SUBSTITUA o arquivo next.config.js por esta versão:
+import type { NextConfig } from 'next'
 
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  experimental: {
-    serverComponentsExternalPackages: ['pdf-parse'],
+const nextConfig: NextConfig = {
+  serverExternalPackages: ['sharp'],
+
+  images: {
+    unoptimized: true,
   },
-  webpack: (config: { resolve: { alias: { canvas: boolean; encoding: boolean; }; }; }) => {
-    config.resolve.alias.canvas = false;
-    config.resolve.alias.encoding = false;
-    return config;
+
+  async headers() {
+    return [
+      {
+        source: '/api/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Credentials', value: 'true' },
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT' },
+          { key: 'Access-Control-Allow-Headers', value: 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version' },
+        ],
+      },
+    ]
+  },
+
+  typescript: {
+    ignoreBuildErrors: false,
   },
   eslint: {
-    ignoreDuringBuilds: true, // IGNORA ESLINT NO BUILD
+    ignoreDuringBuilds: false,
   },
-  typescript: {
-    ignoreBuildErrors: false, // MANTÉM VERIFICAÇÃO TYPESCRIPT
+
+  env: {
+    CUSTOM_KEY: process.env.CUSTOM_KEY,
   },
 }
 
-module.exports = nextConfig
+export default nextConfig

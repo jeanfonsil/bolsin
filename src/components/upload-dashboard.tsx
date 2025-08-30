@@ -21,6 +21,7 @@ import {
   TrendingUp,
   Activity
 } from 'lucide-react'
+import { DebugInfo } from './debug-info'
 
 interface UploadedFile {
   id: string
@@ -40,6 +41,7 @@ interface UploadedFile {
     statistics?: any
   }
   validationWarnings?: string[]
+  processedRows?: any[]
 }
 
 export default function UploadDashboard() {
@@ -83,15 +85,33 @@ export default function UploadDashboard() {
         body: formData
       })
       
-      const uploadResult = await uploadResponse.json()
-      console.log('📤 Upload resultado:', uploadResult)
+      console.log('🔍 Upload response status:', uploadResponse.status)
+      console.log('🔍 Upload response headers:', Object.fromEntries(uploadResponse.headers.entries()))
       
+      const uploadResult = await uploadResponse.json()
+      console.log('🔍 Upload resultado RAW:', JSON.stringify(uploadResult, null, 2))
+      console.log('🔍 uploadResult.success:', uploadResult.success)
+      console.log('🔍 uploadResult.data:', uploadResult.data)
+      console.log('🔍 uploadResult.data?.fileId:', uploadResult.data?.fileId)
+      
+      // ✅ Validação melhorada da resposta
       if (!uploadResult.success) {
-        throw new Error(uploadResult.error || 'Erro no upload')
+        console.error('❌ Upload falhou:', uploadResult.error || uploadResult.message)
+        throw new Error(uploadResult.error || uploadResult.message || 'Erro no upload')
+      }
+
+      if (!uploadResult.data) {
+        console.error('❌ uploadResult.data ausente:', uploadResult)
+        throw new Error('Upload retornou dados inválidos - data ausente')
+      }
+
+      if (!uploadResult.data.fileId) {
+        console.error('❌ uploadResult.data.fileId ausente:', uploadResult.data)
+        throw new Error('Upload retornou dados inválidos - fileId ausente')
       }
 
       const realFileId = uploadResult.data.fileId
-      console.log('🆔 FileId real:', realFileId)
+      console.log('🆔 FileId real extraído:', realFileId)
 
       // Atualizar com dados do upload
       setFiles(prev => prev.map(f => 
@@ -140,9 +160,9 @@ export default function UploadDashboard() {
               progress: 100,
               transactions: processResult.data.transactions,
               categories: processResult.data.categories,
-              analysis: processResult.data.analysis
-            }
-          : f
+              analysis: processResult.data.analysis,
+              processedRows: processResult.data.rawTransactions || processResult.data.rows
+            } : f
       ))
 
       console.log('🎉 Processamento completo!')
@@ -300,6 +320,27 @@ export default function UploadDashboard() {
     }
   }
 
+  // Helpers de formatação para CSV
+  const formatDateForDownload = (dateInput: any): string => {
+    if (!dateInput) return ''
+    let date: Date
+    if (typeof dateInput === 'string') {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
+        const [y, m, d] = dateInput.split('-').map(Number)
+        date = new Date(y, m - 1, d)
+      } else {
+        date = new Date(dateInput)
+      }
+    } else if (dateInput instanceof Date) {
+      date = dateInput
+    } else {
+      return String(dateInput)
+    }
+    return isNaN(date.getTime()) ? String(dateInput) : date.toLocaleDateString('pt-BR')
+  }
+  const cleanDescription = (d: string) => (d || '').toString().trim().normalize('NFC').replace(/\s+/g, ' ').slice(0, 100)
+  const formatCurrency = (n: number) => `R$ ${Math.abs(Number(n) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
   const getStatusText = (status: UploadedFile['status']) => {
     switch (status) {
       case 'uploading':
@@ -318,6 +359,44 @@ export default function UploadDashboard() {
     setFiles(prev => prev.filter(f => f.id !== id))
   }
 
+  // ✅ Função de teste da API
+  const testAPI = async () => {
+    console.log('🧪 === TESTE DA API ===')
+    
+    try {
+      console.log('🔍 1. Testando GET /api/upload...')
+      const getResponse = await fetch('/api/upload')
+      const getData = await getResponse.json()
+      console.log('✅ GET response:', getData)
+      
+      console.log('🔍 2. Criando arquivo de teste...')
+      const testContent = 'data,descricao,valor\n01/01/2024,TESTE,100.50'
+      const testFile = new File([testContent], 'teste.csv', { type: 'text/csv' })
+      console.log('📄 Arquivo de teste criado:', testFile)
+      
+      console.log('🔍 3. Fazendo upload de teste...')
+      const formData = new FormData()
+      formData.append('file', testFile)
+      
+      const uploadResponse = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      })
+      
+      console.log('🔍 4. Status do upload:', uploadResponse.status)
+      console.log('🔍 5. Headers:', Object.fromEntries(uploadResponse.headers.entries()))
+      
+      const uploadResult = await uploadResponse.json()
+      console.log('🔍 6. Resultado completo:', JSON.stringify(uploadResult, null, 2))
+      
+      alert('Teste concluído! Veja o console para detalhes.')
+      
+    } catch (error) {
+      console.error('💥 Erro no teste:', error)
+      alert('Erro no teste: ' + (error instanceof Error ? error.message : 'Erro desconhecido'))
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-4">
       <div className="container mx-auto max-w-6xl">
@@ -326,73 +405,75 @@ export default function UploadDashboard() {
         <div className="mb-8">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 mb-2">Dashboard do Bolsin</h1>
-              <p className="text-gray-600">Transforme seus extratos bancários em planilhas organizadas com IA</p>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2 flex items-center">
+                <Brain className="h-8 w-8 mr-3 text-blue-600" />
+                Bolsin AI
+              </h1>
+              <p className="text-gray-600">Transforme seus extratos em planilhas organizadas com inteligência artificial</p>
             </div>
             
-            <div className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-lg flex items-center justify-center">
-                <span className="text-white font-bold text-sm">B</span>
-              </div>
-              <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-                Bolsin
-              </span>
+            <div className="flex items-center space-x-4">
+              <Badge variant="outline" className="px-3 py-1">
+                <Activity className="h-4 w-4 mr-1" />
+                {files.length} arquivo{files.length !== 1 ? 's' : ''}
+              </Badge>
+              {files.length > 0 && (
+                <Badge variant="outline" className="px-3 py-1">
+                  <TrendingUp className="h-4 w-4 mr-1" />
+                  {files.filter(f => f.status === 'completed').length} processado{files.filter(f => f.status === 'completed').length !== 1 ? 's' : ''}
+                </Badge>
+              )}
+              
+              {/* ✅ Botão de teste da API */}
+              <Button variant="outline" size="sm" onClick={testAPI}>
+                🧪 Testar API
+              </Button>
             </div>
           </div>
 
-          {/* Estatísticas rápidas */}
+          {/* Stats rápidas */}
           {files.length > 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <Card>
                 <CardContent className="p-4">
-                  <div className="flex items-center space-x-2">
-                    <FileSpreadsheet className="h-5 w-5 text-blue-500" />
+                  <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm text-gray-600">Total Arquivos</p>
-                      <p className="text-2xl font-bold">{files.length}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center space-x-2">
-                    <TrendingUp className="h-5 w-5 text-green-500" />
-                    <div>
-                      <p className="text-sm text-gray-600">Processados</p>
-                      <p className="text-2xl font-bold">{files.filter(f => f.status === 'completed').length}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center space-x-2">
-                    <Activity className="h-5 w-5 text-purple-500" />
-                    <div>
-                      <p className="text-sm text-gray-600">Transações</p>
-                      <p className="text-2xl font-bold">
+                      <p className="text-sm font-medium text-gray-600">Total de Transações</p>
+                      <p className="text-2xl font-bold text-gray-900">
                         {files.reduce((sum, f) => sum + (f.transactions || 0), 0)}
                       </p>
                     </div>
+                    <FileSpreadsheet className="h-8 w-8 text-blue-500" />
                   </div>
                 </CardContent>
               </Card>
-              
+
               <Card>
                 <CardContent className="p-4">
-                  <div className="flex items-center space-x-2">
-                    <Brain className="h-5 w-5 text-indigo-500" />
+                  <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-sm text-gray-600">IA Confiança</p>
-                      <p className="text-2xl font-bold">
-                        {files.length > 0 
+                      <p className="text-sm font-medium text-gray-600">Categorias Encontradas</p>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {Array.from(new Set(files.flatMap(f => f.categories || []))).length}
+                      </p>
+                    </div>
+                    <Activity className="h-8 w-8 text-green-500" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-gray-600">Precisão Média</p>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {files.length > 0
                           ? Math.round(files.reduce((sum, f) => sum + (f.analysis?.averageConfidence || 0), 0) / files.length * 100)
                           : 0}%
                       </p>
                     </div>
+                    <TrendingUp className="h-8 w-8 text-purple-500" />
                   </div>
                 </CardContent>
               </Card>
@@ -430,7 +511,10 @@ export default function UploadDashboard() {
                 {isProcessing ? 'Processando...' : 'Solte seu arquivo aqui'}
               </p>
               <p className="text-sm text-gray-500">
-                {isProcessing ? 'Aguarde o processamento atual terminar' : 'ou clique para selecionar'}
+                {isProcessing ? 
+                  'Aguarde enquanto a IA processa seu extrato' : 
+                  'ou clique para selecionar do seu computador'
+                }
               </p>
               
               <input
@@ -445,36 +529,49 @@ export default function UploadDashboard() {
           </CardContent>
         </Card>
 
-        {/* Lista de arquivos melhorada */}
+        {/* Lista de arquivos */}
         {files.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Arquivos Processados</CardTitle>
-              <CardDescription>
-                Acompanhe o status e faça download das planilhas organizadas
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {files.map((file) => (
-                  <div key={file.id} className="border rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center space-x-3">
-                        <FileText className="h-8 w-8 text-gray-400" />
-                        <div>
-                          <h3 className="font-medium text-gray-900">{file.name}</h3>
-                          <p className="text-sm text-gray-500">
-                            {formatFileSize(file.size)} • {file.uploadedAt.toLocaleString()}
-                          </p>
+          <div className="space-y-4">
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Arquivos Processados</h2>
+            
+            {files.map((file) => (
+              <Card key={file.id} className="overflow-hidden">
+                <CardContent className="p-0">
+                  <div className="p-6">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-start space-x-4">
+                        <div className="mt-1">
+                          <FileText className="h-8 w-8 text-blue-500" />
+                        </div>
+                        
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center space-x-2 mb-1">
+                            <h3 className="text-lg font-medium text-gray-900 truncate">
+                              {file.name}
+                            </h3>
+                            <Badge variant={
+                              file.status === 'completed' ? 'default' :
+                              file.status === 'error' ? 'destructive' :
+                              'secondary'
+                            }>
+                              {getStatusText(file.status)}
+                            </Badge>
+                          </div>
+                          
+                          <div className="flex items-center space-x-4 text-sm text-gray-500">
+                            <span>{formatFileSize(file.size)}</span>
+                            <span>{getStatusIcon(file.status)}</span>
+                            <span>Enviado {file.uploadedAt.toLocaleTimeString()}</span>
+                            {file.transactions && (
+                              <span className="text-green-600 font-medium">
+                                {file.transactions} transações
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
                       
-                      <div className="flex items-center space-x-3">
-                        <div className="flex items-center space-x-2">
-                          {getStatusIcon(file.status)}
-                          <span className="text-sm font-medium">{getStatusText(file.status)}</span>
-                        </div>
-                        
+                      <div className="flex items-center space-x-2">
                         {file.status === 'completed' && (
                           <Button 
                             size="sm" 
@@ -523,82 +620,61 @@ export default function UploadDashboard() {
                     )}
                     
                     {/* Success details */}
-                    {file.status === 'completed' && (
-                      <div>
-                        <div className="flex items-center space-x-4 text-sm text-gray-600">
-                          <span>📊 {file.transactions} transações</span>
-                          <span>🏷️ {file.categories?.length} categorias</span>
-                          {file.analysis && (
-                            <span>🎯 {Math.round(file.analysis.averageConfidence * 100)}% confiança</span>
-                          )}
+                    {file.status === 'completed' && file.analysis && (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t">
+                        <div className="text-center">
+                          <p className="text-2xl font-bold text-green-600">
+                            {file.transactions}
+                          </p>
+                          <p className="text-xs text-gray-500">Transações</p>
                         </div>
-                        
-                        {file.categories && file.categories.length > 0 && (
-                          <div className="mt-3">
-                            <p className="text-sm text-gray-600 mb-2">Categorias encontradas:</p>
-                            <div className="flex flex-wrap gap-1">
-                              {file.categories.map((category, index) => (
-                                <Badge key={index} variant="secondary" className="text-xs">
-                                  {category}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+                        <div className="text-center">
+                          <p className="text-2xl font-bold text-blue-600">
+                            {file.categories?.length || 0}
+                          </p>
+                          <p className="text-xs text-gray-500">Categorias</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-2xl font-bold text-purple-600">
+                            {Math.round(file.analysis.averageConfidence * 100)}%
+                          </p>
+                          <p className="text-xs text-gray-500">Precisão</p>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-2xl font-bold text-orange-600">
+                            {file.analysis.processingTime}s
+                          </p>
+                          <p className="text-xs text-gray-500">Tempo</p>
+                        </div>
                       </div>
                     )}
                   </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
         )}
 
-        {/* Empty state melhorado */}
+        {/* Estado vazio */}
         {files.length === 0 && (
-          <Card className="text-center py-16">
-            <CardContent>
-              <FileSpreadsheet className="mx-auto h-20 w-20 text-gray-400 mb-6" />
-              <h3 className="text-2xl font-medium text-gray-900 mb-3">Bem-vindo ao Bolsin!</h3>
-              <p className="text-gray-500 mb-8 max-w-md mx-auto">
-                Transforme seus extratos bancários em planilhas organizadas automaticamente. 
-                Nossa IA categoriza suas transações em segundos.
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mx-auto mb-8">
-                <div className="text-center">
-                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <Upload className="h-6 w-6 text-blue-600" />
-                  </div>
-                  <h4 className="font-medium">1. Upload</h4>
-                  <p className="text-sm text-gray-500">Envie seu extrato</p>
-                </div>
-                <div className="text-center">
-                  <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <Brain className="h-6 w-6 text-purple-600" />
-                  </div>
-                  <h4 className="font-medium">2. IA Processa</h4>
-                  <p className="text-sm text-gray-500">Categorização automática</p>
-                </div>
-                <div className="text-center">
-                  <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <Download className="h-6 w-6 text-green-600" />
-                  </div>
-                  <h4 className="font-medium">3. Download</h4>
-                  <p className="text-sm text-gray-500">Planilha organizada</p>
-                </div>
-              </div>
-              <Button 
-                size="lg"
-                onClick={() => document.getElementById('fileInput')?.click()}
-                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
-              >
-                <Upload className="h-5 w-5 mr-2" />
-                Começar Agora
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="text-center py-12">
+            <FileText className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">
+              Nenhum arquivo processado ainda
+            </h3>
+            <p className="text-gray-500 mb-6">
+              Faça upload do seu primeiro extrato bancário para começar
+            </p>
+            <Button onClick={() => document.getElementById('fileInput')?.click()}>
+              <Upload className="h-4 w-4 mr-2" />
+              Selecionar Arquivo
+            </Button>
+          </div>
         )}
       </div>
+      
+      {/* ✅ Componente de debug */}
+      <DebugInfo />
     </div>
   )
 }
