@@ -1,212 +1,131 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { MonitoringService } from '@/lib/monitoring/monitoring'
+import { getFileStore } from '@/lib/server/file-store'
+import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 
 export const runtime = 'nodejs'
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
-const ALLOWED_TYPES = [
-  'application/pdf',
-  'text/csv', 
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-]
-
-// 🔥 USAR STORE GLOBAL (mesmo que process/route.ts)
-declare global {
-  var fileStore: Map<string, {
-    buffer: Buffer
-    metadata: any
-  }>
-}
-
-if (typeof global !== 'undefined') {
-  if (!global.fileStore) {
-    global.fileStore = new Map()
-  }
-}
-
-const fileStore = global.fileStore // 🔥 USAR STORE GLOBAL
+const fileStore = getFileStore()
 
 export async function POST(request: NextRequest) {
-  console.log('🔄 Upload API iniciada...')
-  
+  const monitoring = MonitoringService.getInstance()
+  const fileId = crypto.randomUUID()
+
+  monitoring.startProcess(fileId, 'upload')
+
   try {
-    console.log('1️⃣ Parseando form data...')
     const formData = await request.formData()
-    
-    console.log('2️⃣ Extraindo arquivo...')
-    const file = formData.get('file') as File
-    const userId = formData.get('userId') as string || 'anonymous'
+    const file = formData.get('file') as File | null
 
     if (!file) {
-      console.log('❌ Nenhum arquivo enviado')
-      return NextResponse.json(
-        { error: 'Nenhum arquivo enviado' },
-        { status: 400 }
-      )
+      const error = 'Nenhum arquivo enviado'
+      monitoring.errorProcess(fileId, 'upload', error, {
+        errorType: 'validation_error',
+        step: 'file_validation'
+      })
+      return NextResponse.json({ success: false, error }, { status: 400 })
     }
 
-    console.log('3️⃣ Validando tipo de arquivo...')
-    if (!ALLOWED_TYPES.includes(file.type)) {
-      console.log('❌ Tipo não permitido:', file.type)
-      return NextResponse.json(
-        { 
-          error: 'Tipo de arquivo não suportado',
-          received: file.type,
-          allowedTypes: ALLOWED_TYPES 
-        },
-        { status: 400 }
-      )
+    const maxSize = 10 * 1024 * 1024 // 10MB
+    const validTypes = [
+      'application/pdf',
+      'text/csv',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ]
+
+    if (file.size > maxSize) {
+      const error = 'Arquivo muito grande. Máximo 10MB.'
+      monitoring.errorProcess(fileId, 'upload', error, {
+        errorType: 'size_error',
+        fileSize: file.size,
+        fileName: file.name
+      })
+      return NextResponse.json({ success: false, error }, { status: 413 })
     }
 
-    console.log('4️⃣ Validando tamanho...')
-    if (file.size > MAX_FILE_SIZE) {
-      console.log('❌ Arquivo muito grande:', file.size)
-      return NextResponse.json(
-        { 
-          error: 'Arquivo muito grande',
-          maxSize: MAX_FILE_SIZE,
-          receivedSize: file.size
-        },
-        { status: 400 }
-      )
+    if (!validTypes.includes(file.type)) {
+      const error = 'Tipo de arquivo não suportado. Use PDF, CSV, XLS ou XLSX.'
+      monitoring.errorProcess(fileId, 'upload', error, {
+        errorType: 'type_error',
+        fileType: file.type,
+        fileName: file.name
+      })
+      return NextResponse.json({ success: false, error }, { status: 415 })
     }
 
-    console.log(`5️⃣ Upload válido: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`)
+    // Ler arquivo
+    const buffer = Buffer.from(await file.arrayBuffer())
 
-    console.log('6️⃣ Processando arquivo em memória...')
-    const bytes = await file.arrayBuffer()
-    const buffer = Buffer.from(bytes)
-
-    // Gerar ID único DETERMINÍSTICO
-    const timestamp = Date.now()
-    const randomId = Math.random().toString(36).substring(2, 15)
-    const fileId = `${timestamp}-${randomId}`
-    
-    console.log('🆔 ID gerado:', fileId)
-
-    // 🔥 Salvar arquivo original como string para CSV
-    let originalContent = null
-    if (getFileTypeFromMime(file.type) === 'csv') {
-      originalContent = buffer.toString('utf-8')
-      console.log('📄 Conteúdo CSV salvo:', originalContent.length, 'caracteres')
-      // 🔍 Preview do conteúdo para debug
-      console.log('📄 Preview:', originalContent.substring(0, 200) + '...')
+    const metadata = {
+      originalName: file.name,
+      fileType: getFileTypeFromMime(file.type),
+      mimeType: file.type,
+      size: file.size,
+      uploadedAt: new Date().toISOString()
     }
 
-    console.log('7️⃣ Salvando em memória GLOBAL e em DISCO...')
-    
-    // Persistir em disco (dev / node runtime)
+    // Salvar em memória
+    fileStore.set(fileId, { buffer, metadata })
+
+    // Backup em disco (best-effort)
     try {
       const uploadDir = path.join(process.cwd(), 'uploads')
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true })
-      }
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true })
       const ext = getFileExtension(file.name)
-      const diskFileName = `${fileId}.${ext}`
-      const diskPath = path.join(uploadDir, diskFileName)
+      const diskPath = path.join(uploadDir, `${fileId}.${ext}`)
       fs.writeFileSync(diskPath, buffer)
-      console.log('💾 Arquivo salvo em disco:', diskPath)
-    } catch (diskErr) {
-      console.error('❌ Falha ao salvar arquivo em disco:', diskErr)
+    } catch (diskError) {
+      console.error('Erro ao salvar backup em disco:', diskError)
     }
-    
-    const metadata = {
-      id: fileId,
-      originalName: file.name,
-      fileName: `${fileId}.${getFileExtension(file.name)}`,
+
+    monitoring.completeProcess(fileId, 'upload', {
+      fileName: file.name,
       fileSize: file.size,
-      fileType: getFileTypeFromMime(file.type),
-      uploadedAt: new Date(),
-      status: 'uploaded',
-      userId,
-      originalContent // 🔥 SALVAR conteúdo original
-    }
-
-    // 🔥 Store file data in GLOBAL memory
-    fileStore.set(fileId, {
-      buffer,
-      metadata
+      fileType: metadata.fileType,
+      uploadedAt: metadata.uploadedAt
     })
-
-    console.log('✅ Arquivo salvo no store GLOBAL')
-    console.log('🗂️ Store agora tem', fileStore.size, 'arquivos')
-    console.log('🔑 IDs no store:', Array.from(fileStore.keys()))
-
-    const responseData = {
-      success: true,
-      data: {
-        id: fileId, // 🔥 RETORNAR ID CORRETO
-        fileName: metadata.fileName,
-        originalName: file.name,
-        fileSize: file.size,
-        fileType: metadata.fileType,
-        uploadedAt: metadata.uploadedAt,
-        status: 'uploaded',
-        mode: 'global-memory-storage'
-      }
-    }
-
-    console.log('🎉 Upload concluído:', responseData)
-    return NextResponse.json(responseData)
-
-  } catch (error) {
-    console.error('❌ Erro geral no upload:', error)
-    console.error('❌ Error stack:', error instanceof Error ? error.stack : 'No stack')
-    
-    return NextResponse.json(
-      { 
-        error: 'Erro interno do servidor',
-        message: error instanceof Error ? error.message : 'Erro desconhecido'
-      },
-      { status: 500 }
-    )
-  }
-}
-
-// Resto das funções iguais...
-export async function GET(request: NextRequest) {
-  console.log('📡 GET /api/upload chamado')
-  
-  const { searchParams } = new URL(request.url)
-  const fileId = searchParams.get('id')
-
-  if (!fileId) {
-    return NextResponse.json(
-      { error: 'ID do arquivo é obrigatório' },
-      { status: 400 }
-    )
-  }
-
-  try {
-    // 🔥 Buscar no store GLOBAL
-    const fileData = fileStore.get(fileId)
-    
-    if (!fileData) {
-      console.log('❌ Arquivo não encontrado:', fileId)
-      return NextResponse.json(
-        { error: 'Arquivo não encontrado' },
-        { status: 404 }
-      )
-    }
-
-    console.log('✅ Arquivo encontrado:', fileId)
 
     return NextResponse.json({
       success: true,
       data: {
-        ...fileData.metadata,
-        hasOriginal: !!fileData.metadata.originalContent
+        fileId,
+        originalName: file.name,
+        size: file.size,
+        type: metadata.fileType,
+        uploadedAt: metadata.uploadedAt,
+        validation: { warnings: [] }
       }
     })
-
   } catch (error) {
-    console.error('❌ Erro ao buscar status:', error)
+    console.error('Erro no upload:', error)
+    monitoring.errorProcess(fileId, 'upload', error instanceof Error ? error.message : 'Erro desconhecido', {
+      errorType: 'upload_error',
+      step: 'processing'
+    })
     return NextResponse.json(
-      { error: 'Erro ao verificar status' },
+      { success: false, error: 'Erro interno no upload', message: error instanceof Error ? error.message : 'Erro desconhecido' },
       { status: 500 }
     )
+  }
+}
+
+export async function GET() {
+  try {
+    return NextResponse.json({
+      message: 'Upload API funcionando',
+      filesInMemory: fileStore.size,
+      supportedTypes: [
+        'text/csv',
+        'application/pdf',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      ]
+    })
+  } catch (error) {
+    return NextResponse.json({ error: 'Erro ao verificar status' }, { status: 500 })
   }
 }
 
@@ -223,3 +142,4 @@ function getFileTypeFromMime(mimeType: string): string {
 function getFileExtension(filename: string): string {
   return filename.split('.').pop() || 'unknown'
 }
+

@@ -243,103 +243,141 @@ export class CSVParser {
     return transaction
   }
 
-  private parseDate(dateStr: string): Date | null {
-    if (!dateStr || typeof dateStr !== 'string') return null
-
-    const cleaned = dateStr.trim()
-    
-    // Formatos brasileiros comuns
-    const patterns = [
-      /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/, // DD/MM/YYYY
-      /^(\d{1,2})\/(\d{1,2})\/(\d{2})$/, // DD/MM/YY
-      /^(\d{4})-(\d{1,2})-(\d{1,2})$/, // YYYY-MM-DD
-      /^(\d{1,2})-(\d{1,2})-(\d{4})$/, // DD-MM-YYYY
-    ]
-
-    for (const pattern of patterns) {
-      const match = cleaned.match(pattern)
-      if (match) {
-        let day: number, month: number, year: number
-
-        if (pattern.source.startsWith('^(\\d{4})')) { // YYYY-MM-DD
-          year = parseInt(match[1])
-          month = parseInt(match[2]) - 1
-          day = parseInt(match[3])
-        } else { // DD/MM formats
-          day = parseInt(match[1])
-          month = parseInt(match[2]) - 1
-          year = parseInt(match[3])
-          
-          // Converter YY para YYYY
-          if (year < 100) {
-            year += year < 50 ? 2000 : 1900
-          }
-        }
-
-        const date = new Date(year, month, day)
-        
-        // Validar se a data é válida
-        if (date.getFullYear() === year && 
-            date.getMonth() === month && 
-            date.getDate() === day) {
-          return date
-        }
-      }
-    }
-
-    // Tentar parseamento nativo como fallback
-    const nativeDate = new Date(cleaned)
-    if (!isNaN(nativeDate.getTime())) {
-      return nativeDate
-    }
-
+  private parseDate(dateString: string): Date | null {
+  if (!dateString || typeof dateString !== 'string') {
     return null
   }
 
-  private parseAmount(amountStr: string): { amount: number | null, originalSign: string } {
-    if (!amountStr || typeof amountStr !== 'string') {
-      return { amount: null, originalSign: '' }
-    }
+  // Limpar string
+  const cleaned = dateString.trim()
+  if (!cleaned) return null
 
-    let cleaned = amountStr.trim()
-    const originalSign = cleaned.startsWith('-') ? '-' : '+'
+  // Tentar diferentes formatos de data brasileiros
+  const patterns = [
+    // DD/MM/YYYY ou DD/MM/YY
+    /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/,
+    // DD-MM-YYYY ou DD-MM-YY  
+    /^(\d{1,2})-(\d{1,2})-(\d{2,4})$/,
+    // YYYY-MM-DD (ISO)
+    /^(\d{4})-(\d{1,2})-(\d{1,2})$/,
+    // DD.MM.YYYY
+    /^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/
+  ]
 
-    // Remover símbolos de moeda e espaços
-    cleaned = cleaned
-      .replace(/R\$\s*/, '')
-      .replace(/\s+/g, '')
-      .replace(/[^\d,.-]/g, '')
+  for (let i = 0; i < patterns.length; i++) {
+    const match = cleaned.match(patterns[i])
+    if (match) {
+      let day: number, month: number, year: number
 
-    // Detectar formato brasileiro (1.234,56) vs americano (1,234.56)
-    const hasBrazilianFormat = /\d+\.\d{3},\d{2}$/.test(cleaned) || /\d+,\d{2}$/.test(cleaned)
-    
-    if (hasBrazilianFormat) {
-      // Formato brasileiro: 1.234.567,89
-      cleaned = cleaned.replace(/\./g, '').replace(',', '.')
-    } else {
-      // Formato americano: 1,234,567.89
-      // Remove vírgulas que são separadores de milhares
-      if (cleaned.includes(',') && cleaned.includes('.')) {
-        const lastCommaIndex = cleaned.lastIndexOf(',')
-        const lastDotIndex = cleaned.lastIndexOf('.')
-        if (lastDotIndex > lastCommaIndex) {
-          // Dot é decimal, remover vírgulas
-          cleaned = cleaned.replace(/,/g, '')
-        } else {
-          // Comma é decimal, remover dots
-          cleaned = cleaned.replace(/\./g, '').replace(',', '.')
-        }
+      if (i === 2) { // YYYY-MM-DD
+        year = parseInt(match[1])
+        month = parseInt(match[2])
+        day = parseInt(match[3])
+      } else { // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
+        day = parseInt(match[1])
+        month = parseInt(match[2])
+        year = parseInt(match[3])
+      }
+
+      // Ajustar anos de 2 dígitos
+      if (year < 100) {
+        year += year > 50 ? 1900 : 2000
+      }
+
+      // Validar limites básicos
+      if (month < 1 || month > 12) continue
+      if (day < 1 || day > 31) continue
+      if (year < 1900 || year > 2100) continue
+
+      // Criar data (month - 1 porque Date usa 0-11)
+      const date = new Date(year, month - 1, day)
+      
+      // Verificar se a data é válida (não teve overflow)
+      if (date.getFullYear() === year && 
+          date.getMonth() === month - 1 && 
+          date.getDate() === day) {
+        return date
       }
     }
-
-    const amount = parseFloat(cleaned)
-    
-    if (isNaN(amount)) {
-      return { amount: null, originalSign }
-    }
-
-    return { amount: originalSign === '-' ? -amount : amount, originalSign }
   }
+
+  // Se não encontrou padrão, tentar Date() nativo como fallback
+  try {
+    const nativeDate = new Date(cleaned)
+    if (!isNaN(nativeDate.getTime())) {
+      // Só aceitar se for uma data razoável
+      const year = nativeDate.getFullYear()
+      if (year >= 1900 && year <= 2100) {
+        return nativeDate
+      }
+    }
+  } catch {}
+
+  return null
+}
+
+// ATUALIZAR também o método parseAmount para ser mais robusto
+private parseAmount(amountString: string): { amount: number | null, originalSign: string } {
+  if (!amountString) {
+    return { amount: null, originalSign: '' }
+  }
+
+  const cleaned = String(amountString).trim()
+  if (!cleaned) return { amount: null, originalSign: '' }
+
+  // Detectar sinal original
+  const originalSign = cleaned.includes('-') ? '-' : '+'
+
+  // Remover tudo exceto números, vírgulas e pontos
+  let numericStr = cleaned.replace(/[^\d,.+-]/g, '')
+  
+  // Se vazio após limpeza, retornar null
+  if (!numericStr) return { amount: null, originalSign }
+
+  // Tratar diferentes formatos brasileiros
+  // 1.234,56 -> 1234.56
+  // 1,234.56 -> 1234.56  
+  // 1234,56 -> 1234.56
+  // 1234.56 -> 1234.56
+  
+  const commas = (numericStr.match(/,/g) || []).length
+  const dots = (numericStr.match(/\./g) || []).length
+  
+  if (commas === 1 && dots === 0) {
+    // Formato brasileiro: 1234,56
+    numericStr = numericStr.replace(',', '.')
+  } else if (commas === 0 && dots === 1) {
+    // Já no formato correto: 1234.56
+    // Não fazer nada
+  } else if (commas > 0 && dots > 0) {
+    // Formato com separadores de milhares
+    const lastComma = numericStr.lastIndexOf(',')
+    const lastDot = numericStr.lastIndexOf('.')
+    
+    if (lastComma > lastDot) {
+      // 1.234,56 - vírgula é decimal
+      numericStr = numericStr.replace(/\./g, '').replace(',', '.')
+    } else {
+      // 1,234.56 - ponto é decimal
+      numericStr = numericStr.replace(/,/g, '')
+    }
+  }
+
+  // Remover sinais múltiplos e manter apenas um
+  const isNegative = numericStr.includes('-')
+  numericStr = numericStr.replace(/[+-]/g, '')
+  
+  const parsed = parseFloat(numericStr)
+  
+  if (isNaN(parsed)) {
+    return { amount: null, originalSign }
+  }
+
+  return { 
+    amount: isNegative ? -Math.abs(parsed) : Math.abs(parsed), 
+    originalSign 
+  }
+}
 
   private parseType(typeField: string | null, amount: number, originalSign: string): 'debit' | 'credit' {
     // Se há campo de tipo específico, usar ele

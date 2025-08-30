@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { 
   Upload, 
   FileText, 
@@ -16,14 +17,12 @@ import {
   Eye,
   Trash2,
   AlertCircle,
-  FileSpreadsheet
+  FileSpreadsheet,
+  TrendingUp,
+  Activity
 } from 'lucide-react'
-import { DebugPanel } from '@/components/debug-panel'
 
 interface UploadedFile {
-  averageConfidence: number
-  categoryDistribution: string[] | undefined
-  metadata: any
   id: string
   name: string
   size: number
@@ -34,328 +33,209 @@ interface UploadedFile {
   categories?: string[]
   uploadedAt: Date
   error?: string
-  aiAnalysis?: {
+  analysis?: {
     averageConfidence: number
     categoryDistribution: Record<string, number>
     processingTime: number
-    sampleTransactions?: any[]
+    statistics?: any
   }
+  validationWarnings?: string[]
 }
 
 export default function UploadDashboard() {
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [dragActive, setDragActive] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
 
-  // Corrige datas no download evitando timezone shift (YYYY-MM-DD)
-  const formatDateForCSV = (input: any): string => {
-    if (!input) return ''
-    if (typeof input === 'string') {
-      if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
-        const [y, m, d] = input.split('-')
-        return `${d}/${m}/${y}`
-      }
-      const dt = new Date(input)
-      if (!isNaN(dt.getTime())) return dt.toLocaleDateString('pt-BR')
-      return input
-    }
-    if (input instanceof Date) {
-      return input.toLocaleDateString('pt-BR')
-    }
-    return String(input)
-  }
-
-const processFile = useCallback(async (file: File) => {
-  console.log('🚨 === DEBUG UPLOAD/PROCESS ===')
-  console.log('📤 Arquivo recebido:', file.name, file.size, 'bytes', file.type)
-  
-  // ID temporário para UI
-  const tempId = 'temp-' + Math.random().toString(36).substr(2, 9)
-  console.log('🆔 TempId gerado:', tempId)
-  
-  const newFile: UploadedFile = {
-    id: tempId,
-    name: file.name,
-    size: file.size,
-    type: file.type,
-    status: 'uploading',
-    progress: 0,
-    uploadedAt: new Date(),
-    metadata: undefined,
-    averageConfidence: 0,
-    categoryDistribution: undefined
-  }
-
-  setFiles(prev => [newFile, ...prev])
-
-  // Definir realFileId no escopo da função inteira
-  let realFileId: string | null = null
-
-  try {
-    // ETAPA 1: Upload real do arquivo
-    console.log('📤 Upload real iniciado:', file.name)
+  // Função principal de upload melhorada
+  const processFile = useCallback(async (file: File) => {
+    console.log('🚨 === UPLOAD MELHORADO ===')
+    console.log('📤 Arquivo:', file.name, file.size, 'bytes')
     
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('userId', 'anonymous')
-
-    // Progress simulado durante upload
-    const uploadInterval = setInterval(() => {
-      setFiles(prev => prev.map(f => {
-        if (f.id === tempId && f.status === 'uploading') {
-          const newProgress = Math.min(f.progress + 10, 90)
-          return { ...f, progress: newProgress }
-        }
-        return f
-      }))
-    }, 200)
-
-    console.log('🌐 Fazendo request para /api/upload...')
-    const uploadResponse = await fetch('/api/upload', {
-      method: 'POST',
-      body: formData
-    })
-
-    clearInterval(uploadInterval)
-
-    console.log('🚨 Upload response status:', uploadResponse.status)
-    console.log('🚨 Upload response headers:', Object.fromEntries(uploadResponse.headers.entries()))
-
-    if (!uploadResponse.ok) {
-      let errorMessage = `HTTP ${uploadResponse.status}`
-      
-      try {
-        const errorData = await uploadResponse.json()
-        errorMessage = errorData.error || errorData.message || errorMessage
-        console.log('❌ Upload error data:', errorData)
-      } catch (jsonError) {
-        try {
-          const errorText = await uploadResponse.text()
-          console.log('❌ Upload error text:', errorText)
-          errorMessage = errorText.substring(0, 200)
-        } catch (textError) {
-          console.log('❌ Erro ao ler resposta:', textError)
-        }
-      }
-      
-      throw new Error(errorMessage)
-    }
-
-    const uploadResult = await uploadResponse.json()
-    console.log('🚨 Upload result completo:', uploadResult)
-
-    if (!uploadResult.success || !uploadResult.data?.id) {
-      throw new Error('Upload retornou dados inválidos')
-    }
-
-    // Atribuir valor para realFileId AQUI
-    realFileId = uploadResult.data.id
-    console.log('🚨 ID real do backend:', realFileId)
+    const tempId = 'temp-' + Math.random().toString(36).substr(2, 9)
     
-    // Atualizar com ID real do backend
-    setFiles(prev => prev.map(f => 
-      f.id === tempId 
-        ? { 
-            ...f, 
-            id: realFileId!,
-            status: 'processing' as const,
-            progress: 100,
-            metadata: uploadResult.data 
-          }
-        : f
-    ))
-
-    // ETAPA 2: Processar com IA real
-    console.log('🚨 Iniciando processamento IA com ID:', realFileId)
-
-    const processInterval = setInterval(() => {
-      setFiles(prev => prev.map(f => {
-        if (f.id === realFileId && f.status === 'processing') {
-          const newProgress = Math.min(f.progress + 8, 95)
-          return { ...f, progress: newProgress }
-        }
-        return f
-      }))
-    }, 500)
-
-    console.log('🌐 Fazendo request para /api/process...')
-    const processResponse = await fetch('/api/process', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fileId: realFileId })
-    })
-
-    clearInterval(processInterval)
-
-    console.log('🚨 Process response status:', processResponse.status)
-
-    if (!processResponse.ok) {
-      let errorMessage = `HTTP ${processResponse.status}`
-      
-      try {
-        const errorData = await processResponse.json()
-        errorMessage = errorData.error || errorData.message || errorMessage
-        console.log('❌ Process error data:', errorData)
-      } catch (jsonError) {
-        const errorText = await processResponse.text()
-        console.log('❌ Process error text:', errorText)
-        errorMessage = errorText.substring(0, 200)
-      }
-      
-      throw new Error(`Erro no processamento: ${errorMessage}`)
+    // Criar entrada temporária na UI
+    const newFile: UploadedFile = {
+      id: tempId,
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      status: 'uploading',
+      progress: 0,
+      uploadedAt: new Date()
     }
-
-    const processResult = await processResponse.json()
-    console.log('🚨 Process result COMPLETO:', processResult)
-
-    if (!processResult.success) {
-      throw new Error(processResult.error || 'Processamento falhou')
-    }
-
-    console.log('🚨 SampleTransactions recebidas:', processResult.data.sampleTransactions?.length)
-    console.log('🚨 Primeira sample transaction:', processResult.data.sampleTransactions?.[0])
-
-    // ETAPA 3: Finalizar com dados reais
-    setFiles(prev => prev.map(f => 
-      f.id === realFileId 
-        ? {
-            ...f,
-            status: 'completed' as const,
-            progress: 100,
-            transactions: processResult.data.transactionCount,
-            categories: processResult.data.categories,
-            averageConfidence: processResult.data.averageConfidence,
-            categoryDistribution: processResult.data.categoryDistribution,
-            // Dados extras da IA
-            aiAnalysis: {
-              averageConfidence: processResult.data.averageConfidence,
-              categoryDistribution: processResult.data.categoryDistribution,
-              processingTime: processResult.data.processingTime,
-              sampleTransactions: processResult.data.sampleTransactions // DADOS REAIS!
-            }
-          }
-        : f
-    ))
-
-    console.log('🎉 Arquivo processado com sucesso!')
-
-  } catch (error) {
-    console.error('🚨 ERRO NO PROCESSAMENTO:', error)
-    console.error('🚨 Stack trace:', error instanceof Error ? error.stack : 'No stack')
     
-    // Usar o ID correto: realFileId se disponível, senão tempId
-    const errorId = realFileId || tempId
-    
-    setFiles(prev => prev.map(f => 
-      f.id === errorId
-        ? { 
-            ...f, 
-            status: 'error' as const,
-            progress: 0,
-            error: error instanceof Error ? error.message : String(error)
-          }
-        : f
-    ))
+    setFiles(prev => [...prev, newFile])
+    setIsProcessing(true)
 
-    console.log('🚨 Erro detalhado:', error instanceof Error ? error.message : String(error))
-  }
-}, [])
-
-// Download real do CSV (sem debug)
-const downloadExtract = async (fileId: string) => {
-  
-  try {
-    const fileData = files.find(f => f.id === fileId)
-    
-    if (!fileData) {
-      throw new Error('Arquivo não encontrado')
-    }
-
-    if (fileData.status !== 'completed') {
-      alert('Arquivo ainda não foi processado')
-      return
-    }
-
-    let csvData: any[] = []
-
-    // Buscar dados da API de download (reprocessa do arquivo)
     try {
+      // ETAPA 1: Upload com validação
+      console.log('📤 1. Fazendo upload...')
+      setFiles(prev => prev.map(f => 
+        f.id === tempId ? { ...f, progress: 10 } : f
+      ))
+
+      const formData = new FormData()
+      formData.append('file', file)
+      
+      const uploadResponse = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      })
+      
+      const uploadResult = await uploadResponse.json()
+      console.log('📤 Upload resultado:', uploadResult)
+      
+      if (!uploadResult.success) {
+        throw new Error(uploadResult.error || 'Erro no upload')
+      }
+
+      const realFileId = uploadResult.data.fileId
+      console.log('🆔 FileId real:', realFileId)
+
+      // Atualizar com dados do upload
+      setFiles(prev => prev.map(f => 
+        f.id === tempId 
+          ? { 
+              ...f, 
+              id: realFileId,
+              status: 'processing' as const,
+              progress: 30,
+              validationWarnings: uploadResult.data.validation?.warnings
+            } 
+          : f
+      ))
+
+      // ETAPA 2: Processamento 
+      console.log('⚙️ 2. Processando arquivo...')
+      setFiles(prev => prev.map(f => 
+        f.id === realFileId ? { ...f, progress: 50 } : f
+      ))
+
+      const processResponse = await fetch('/api/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileId: realFileId })
+      })
+      
+      const processResult = await processResponse.json()
+      console.log('⚙️ Processamento resultado:', processResult)
+      
+      if (!processResult.success) {
+        throw new Error(processResult.error || 'Erro no processamento')
+      }
+
+      // ETAPA 3: Finalização
+      console.log('✅ 3. Finalizando...')
+      setFiles(prev => prev.map(f => 
+        f.id === realFileId ? { ...f, progress: 90 } : f
+      ))
+
+      // Atualizar com resultados finais
+      setFiles(prev => prev.map(f => 
+        f.id === realFileId
+          ? { 
+              ...f, 
+              status: 'completed' as const,
+              progress: 100,
+              transactions: processResult.data.transactions,
+              categories: processResult.data.categories,
+              analysis: processResult.data.analysis
+            }
+          : f
+      ))
+
+      console.log('🎉 Processamento completo!')
+
+    } catch (error) {
+      console.error('❌ ERRO:', error)
+      
+      const errorId = files.find(f => f.name === file.name)?.id || tempId
+      
+      setFiles(prev => prev.map(f => 
+        f.id === errorId
+          ? { 
+              ...f, 
+              status: 'error' as const,
+              progress: 0,
+              error: error instanceof Error ? error.message : String(error)
+            }
+          : f
+      ))
+    } finally {
+      setIsProcessing(false)
+    }
+  }, [files])
+
+  // Download otimizado
+  const downloadExtract = async (fileId: string) => {
+    try {
+      const fileData = files.find(f => f.id === fileId)
+      
+      if (!fileData || fileData.status !== 'completed') {
+        throw new Error('Arquivo não está pronto para download')
+      }
+
+      console.log('📥 Iniciando download para:', fileId)
+
       const response = await fetch('/api/download', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId })
       })
       
-      if (response.ok) {
-        const downloadData = await response.json()
-        
-        if (downloadData.success && downloadData.data?.transactions) {
-          csvData = downloadData.data.transactions.map((transaction: any, index: number) => ({
-            'ID': index + 1,
-            'Data': formatDateForCSV(transaction.date),
-            'Descrição': transaction.description,
-            'Valor': `R$ ${Math.abs(transaction.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-            'Tipo': transaction.type === 'debit' ? 'Débito' : 'Crédito',
-            'Categoria': transaction.category || 'Outros',
-            'Confiança IA': `${((transaction.confidence || transaction.aiConfidence || 0) * 100).toFixed(1)}%`
-          }))
-        }
+      const result = await response.json()
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Erro no download')
       }
-    } catch (apiError) {
-      console.log('Erro ao baixar dados:', apiError)
+
+      const csvData = result.data.transactions as any[]
+
+      // Gerar CSV otimizado
+      const headers = Object.keys(csvData[0])
+      const csvContent = [
+        headers.join(','),
+        ...csvData.map(row => 
+          headers.map(header => {
+            const value = row[header as keyof typeof row]
+            if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
+              return `"${value.replace(/"/g, '""')}"`
+            }
+            return value
+          }).join(',')
+        )
+      ].join('\n')
+
+      // Download com BOM para Excel
+      const BOM = '\uFEFF'
+      const blob = new Blob([BOM + csvContent], { type: 'text/csv;charset=utf-8;' })
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      
+      const timestamp = new Date().toISOString().slice(0, 10)
+      link.download = `bolsin_${fileData.name.replace(/[^a-zA-Z0-9]/g, '_')}_${timestamp}.csv`
+      
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      
+      setTimeout(() => URL.revokeObjectURL(link.href), 100)
+
+      console.log('✅ Download concluído')
+
+    } catch (error) {
+      console.error('❌ Erro no download:', error)
+      alert('Erro no download: ' + (error instanceof Error ? error.message : 'Erro desconhecido'))
     }
-
-    // Sem fallback local: download deve refletir o arquivo original
-
-    // VERIFICAÇÃO FINAL
-    if (csvData.length === 0) {
-      alert('Nenhum dado processado encontrado no download.')
-      return
-    }
-
-    // Gerar CSV
-    const headers = Object.keys(csvData[0])
-    const csvContent = [
-      headers.join(','),
-      ...csvData.map(row => 
-        headers.map(header => {
-          const value = row[header]
-          if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
-            return `"${value.replace(/"/g, '""')}"`
-          }
-          return value
-        }).join(',')
-      )
-    ].join('\n')
-
-    const BOM = '\uFEFF' // mantém UTF-8 com BOM para Excel
-    const finalContent = BOM + csvContent
-
-    // Download
-    const blob = new Blob([finalContent], { type: 'text/csv;charset=utf-8;' })
-    const link = document.createElement('a')
-    link.href = URL.createObjectURL(blob)
-    
-    const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-')
-    const fileName = `bolsin_processado_DEBUG_${fileData.name.replace(/[^a-zA-Z0-9]/g, '_')}_${timestamp}.csv`
-    link.download = fileName
-    
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
-    
-    setTimeout(() => URL.revokeObjectURL(link.href), 100)
-
-    // Notificação opcional removida; download silencioso e real
-
-  } catch (error) {
-    console.error('🚨 ERRO DOWNLOAD:', error)
-    alert('❌ ' + (error instanceof Error ? error.message : 'Erro desconhecido'))
   }
-}
 
+  // Handlers de drag and drop
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     setDragActive(false)
+    
+    if (isProcessing) return
     
     const droppedFiles = Array.from(e.dataTransfer.files)
     droppedFiles.forEach(file => {
@@ -363,16 +243,18 @@ const downloadExtract = async (fileId: string) => {
         processFile(file)
       }
     })
-  }, [processFile])
+  }, [processFile, isProcessing])
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isProcessing) return
+    
     const selectedFiles = Array.from(e.target.files || [])
     selectedFiles.forEach(file => {
       if (validateFile(file)) {
         processFile(file)
       }
     })
-  }, [processFile])
+  }, [processFile, isProcessing])
 
   const validateFile = (file: File): boolean => {
     const validTypes = [
@@ -396,6 +278,7 @@ const downloadExtract = async (fileId: string) => {
     return true
   }
 
+  // Utilitários de formatação
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024
@@ -414,8 +297,6 @@ const downloadExtract = async (fileId: string) => {
         return <CheckCircle className="h-5 w-5 text-green-500" />
       case 'error':
         return <XCircle className="h-5 w-5 text-red-500" />
-      default:
-        return null
     }
   }
 
@@ -429,79 +310,24 @@ const downloadExtract = async (fileId: string) => {
         return 'Concluído'
       case 'error':
         return 'Erro'
-      default:
-        return ''
     }
   }
 
   const removeFile = (id: string) => {
+    if (isProcessing) return
     setFiles(prev => prev.filter(f => f.id !== id))
-  }
-
-  // Função para testar IA
-  const testAI = async () => {
-    console.log('🧪 Testando IA...')
-    
-    try {
-      const testDescription = 'UBER EATS PEDIDO 12345'
-      const response = await fetch(`/api/categorize?description=${encodeURIComponent(testDescription)}`)
-      const result = await response.json()
-      
-      if (result.success) {
-        console.log('✅ Teste IA bem-sucedido:', result.data)
-        alert(`IA funcionando!\nCategoria: ${result.data.category}\nConfiança: ${(result.data.confidence * 100).toFixed(1)}%`)
-      } else {
-        console.error('❌ Teste IA falhou:', result.error)
-        alert(`Erro no teste IA: ${result.error}`)
-      }
-    } catch (error) {
-      console.error('❌ Erro teste IA:', error)
-      alert(`Erro de conexão: ${error}`)
-    }
-  }
-
-  // Função para testar APIs reais
-  const testRealAPI = async () => {
-    console.log('🧪 Testando APIs reais...')
-    
-    try {
-      // Teste 1: Health check das APIs
-      console.log('1. Testando API de categorização...')
-      const catResponse = await fetch('/api/categorize?description=UBER EATS TESTE')
-      const catResult = await catResponse.json()
-      
-      if (catResult.success) {
-        console.log('✅ API Categorização OK:', catResult.data)
-      } else {
-        throw new Error('API Categorização falhou')
-      }
-
-      // Teste 2: Verificar se upload funciona (sem arquivo)
-      console.log('2. Testando estrutura API Upload...')
-      const uploadResponse = await fetch('/api/upload', { method: 'POST', body: new FormData() })
-      // Esperamos erro 400 (sem arquivo) - isso é normal
-      if (uploadResponse.status === 400) {
-        console.log('✅ API Upload estrutura OK')
-      }
-
-      alert('🎉 APIs funcionando! Upload um arquivo de teste.')
-
-    } catch (error) {
-      console.error('❌ Teste falhou:', error)
-      alert(`Erro nos testes: ${error}`)
-    }
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-4">
       <div className="container mx-auto max-w-6xl">
         
-        {/* Header */}
+        {/* Header melhorado */}
         <div className="mb-8">
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Dashboard do Bolsin</h1>
-              <p className="text-gray-600">Transforme seus extratos bancários em planilhas organizadas</p>
+              <p className="text-gray-600">Transforme seus extratos bancários em planilhas organizadas com IA</p>
             </div>
             
             <div className="flex items-center space-x-2">
@@ -514,253 +340,200 @@ const downloadExtract = async (fileId: string) => {
             </div>
           </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center space-x-2">
-                  <FileText className="h-8 w-8 text-blue-500" />
-                  <div>
-                    <p className="text-2xl font-bold">{files.length}</p>
-                    <p className="text-sm text-gray-600">Extratos enviados</p>
+          {/* Estatísticas rápidas */}
+          {files.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center space-x-2">
+                    <FileSpreadsheet className="h-5 w-5 text-blue-500" />
+                    <div>
+                      <p className="text-sm text-gray-600">Total Arquivos</p>
+                      <p className="text-2xl font-bold">{files.length}</p>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center space-x-2">
-                  <Brain className="h-8 w-8 text-purple-500" />
-                  <div>
-                    <p className="text-2xl font-bold">
-                      {files.filter(f => f.status === 'completed').reduce((acc, f) => acc + (f.transactions || 0), 0)}
-                    </p>
-                    <p className="text-sm text-gray-600">Transações processadas</p>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center space-x-2">
+                    <TrendingUp className="h-5 w-5 text-green-500" />
+                    <div>
+                      <p className="text-sm text-gray-600">Processados</p>
+                      <p className="text-2xl font-bold">{files.filter(f => f.status === 'completed').length}</p>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center space-x-2">
-                  <CheckCircle className="h-8 w-8 text-green-500" />
-                  <div>
-                    <p className="text-2xl font-bold">{files.filter(f => f.status === 'completed').length}</p>
-                    <p className="text-sm text-gray-600">Concluídos</p>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center space-x-2">
+                    <Activity className="h-5 w-5 text-purple-500" />
+                    <div>
+                      <p className="text-sm text-gray-600">Transações</p>
+                      <p className="text-2xl font-bold">
+                        {files.reduce((sum, f) => sum + (f.transactions || 0), 0)}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+                </CardContent>
+              </Card>
+              
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center space-x-2">
+                    <Brain className="h-5 w-5 text-indigo-500" />
+                    <div>
+                      <p className="text-sm text-gray-600">IA Confiança</p>
+                      <p className="text-2xl font-bold">
+                        {files.length > 0 
+                          ? Math.round(files.reduce((sum, f) => sum + (f.analysis?.averageConfidence || 0), 0) / files.length * 100)
+                          : 0}%
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
 
-        {/* Upload Area */}
+        {/* Área de upload melhorada */}
         <Card className="mb-8">
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Upload className="h-5 w-5" />
-              <span>Enviar Novo Extrato</span>
-            </CardTitle>
+            <CardTitle>Upload de Extrato</CardTitle>
             <CardDescription>
-              Arraste e solte seus arquivos PDF ou CSV aqui, ou clique para selecionar
+              Arraste e solte seu arquivo CSV ou clique para selecionar. Formatos suportados: CSV, PDF, XLS, XLSX (máx. 10MB)
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div
-              className={`border-2 border-dashed rounded-lg p-8 text-center transition-all ${
+              className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors cursor-pointer ${
                 dragActive 
                   ? 'border-blue-500 bg-blue-50' 
-                  : 'border-gray-300 hover:border-gray-400'
+                  : isProcessing 
+                    ? 'border-gray-300 bg-gray-50 cursor-not-allowed'
+                    : 'border-gray-300 hover:border-blue-400 hover:bg-blue-50'
               }`}
               onDrop={handleDrop}
               onDragOver={(e) => {
                 e.preventDefault()
-                setDragActive(true)
+                if (!isProcessing) setDragActive(true)
               }}
               onDragLeave={() => setDragActive(false)}
+              onClick={() => !isProcessing && document.getElementById('fileInput')?.click()}
             >
-              <Upload className={`mx-auto h-12 w-12 mb-4 ${
-                dragActive ? 'text-blue-500' : 'text-gray-400'
-              }`} />
+              <Upload className={`mx-auto h-12 w-12 mb-4 ${isProcessing ? 'text-gray-400' : 'text-gray-400'}`} />
+              <p className="text-lg font-medium text-gray-900 mb-2">
+                {isProcessing ? 'Processando...' : 'Solte seu arquivo aqui'}
+              </p>
+              <p className="text-sm text-gray-500">
+                {isProcessing ? 'Aguarde o processamento atual terminar' : 'ou clique para selecionar'}
+              </p>
               
-              <div className="space-y-2">
-                <p className="text-lg font-medium">
-                  Arraste seus extratos aqui
-                </p>
-                <p className="text-gray-500">
-                  ou
-                </p>
-                <div>
-                  <input
-                    type="file"
-                    multiple
-                    accept=".pdf,.csv,.xls,.xlsx"
-                    onChange={handleFileInput}
-                    className="hidden"
-                    id="file-upload"
-                  />
-                  <label htmlFor="file-upload">
-                    <Button className="cursor-pointer">
-                      Selecionar Arquivos
-                    </Button>
-                  </label>
-                </div>
-                <p className="text-sm text-gray-500">
-                  Suportamos PDF, CSV, XLS e XLSX até 10MB
-                </p>
-              </div>
-            </div>
-
-            {/* Supported Banks Info */}
-            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-              <div className="flex items-start space-x-2">
-                <AlertCircle className="h-5 w-5 text-blue-500 mt-0.5" />
-                <div>
-                  <p className="font-medium text-blue-900 mb-1">Bancos Suportados</p>
-                  <p className="text-sm text-blue-700">
-                    Nubank, Itaú, Bradesco, Banco do Brasil, Santander, Caixa, BTG, Inter, C6 Bank e mais
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Test Buttons */}
-            <div className="mt-4 pt-4 border-t flex gap-2">
-              <Button
-                onClick={testAI}
-                variant="outline"
-                size="sm"
-                className="text-purple-600 border-purple-600 hover:bg-purple-50"
-              >
-                🧠 Testar IA
-              </Button>
-              
-              <Button
-                onClick={testRealAPI}
-                variant="outline"
-                size="sm"
-                className="text-green-600 border-green-600 hover:bg-green-50"
-              >
-                🔌 Testar APIs
-              </Button>
+              <input
+                id="fileInput"
+                type="file"
+                className="hidden"
+                accept=".csv,.pdf,.xls,.xlsx"
+                onChange={handleFileInput}
+                disabled={isProcessing}
+              />
             </div>
           </CardContent>
         </Card>
 
-        {/* Files List */}
+        {/* Lista de arquivos melhorada */}
         {files.length > 0 && (
           <Card>
             <CardHeader>
-              <CardTitle>Extratos Recentes</CardTitle>
+              <CardTitle>Arquivos Processados</CardTitle>
               <CardDescription>
-                Acompanhe o progresso dos seus uploads e processamentos
+                Acompanhe o status e faça download das planilhas organizadas
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
                 {files.map((file) => (
-                  <div key={file.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
+                  <div key={file.id} className="border rounded-lg p-4">
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center space-x-3">
-                        <div className="p-2 bg-blue-100 rounded-lg">
-                          <FileSpreadsheet className="h-6 w-6 text-blue-600" />
-                        </div>
+                        <FileText className="h-8 w-8 text-gray-400" />
                         <div>
-                          <p className="font-medium text-gray-900">{file.name}</p>
+                          <h3 className="font-medium text-gray-900">{file.name}</h3>
                           <p className="text-sm text-gray-500">
-                            {formatFileSize(file.size)} • {file.uploadedAt.toLocaleDateString()}
+                            {formatFileSize(file.size)} • {file.uploadedAt.toLocaleString()}
                           </p>
-                          {file.error && (
-                            <p className="text-sm text-red-600">Erro: {file.error}</p>
-                          )}
                         </div>
                       </div>
-
+                      
                       <div className="flex items-center space-x-3">
                         <div className="flex items-center space-x-2">
                           {getStatusIcon(file.status)}
-                          <Badge variant={
-                            file.status === 'completed' ? 'default' :
-                            file.status === 'error' ? 'destructive' :
-                            'secondary'
-                          }>
-                            {getStatusText(file.status)}
-                          </Badge>
-                        </div>
-
-                        <div className="flex items-center space-x-1">
-                          {file.status === 'completed' && (
-                            <>
-                              <Button variant="ghost" size="sm">
-                                <Eye className="h-4 w-4" />
-                              </Button>
-                              <Button 
-                                variant="ghost" 
-                                size="sm" 
-                                className="text-green-600 hover:text-green-700"
-                                onClick={() => downloadExtract(file.id)}
-                              >
-                                <Download className="h-4 w-4" />
-                              </Button>
-                            </>
-                          )}
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            onClick={() => removeFile(file.id)}
-                            className="text-red-600 hover:text-red-700"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Progress Bar */}
-                    {(file.status === 'uploading' || file.status === 'processing') && (
-                      <div className="mb-3">
-                        <div className="flex justify-between text-sm text-gray-600 mb-1">
-                          <span>{getStatusText(file.status)}</span>
-                          <span>{Math.round(file.progress)}%</span>
-                        </div>
-                        <Progress value={file.progress} className="h-2" />
-                      </div>
-                    )}
-
-                    {/* Results */}
-                    {file.status === 'completed' && file.transactions && (
-                      <div className="bg-green-50 rounded-lg p-3">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-4">
-                            <div className="text-center">
-                              <p className="text-2xl font-bold text-green-600">{file.transactions}</p>
-                              <p className="text-xs text-gray-600">transações</p>
-                            </div>
-                            <div className="text-center">
-                              <p className="text-2xl font-bold text-green-600">{file.categories?.length || 0}</p>
-                              <p className="text-xs text-gray-600">categorias</p>
-                            </div>
-                            {file.aiAnalysis && (
-                              <div className="text-center">
-                                <p className="text-2xl font-bold text-green-600">
-                                  {(file.aiAnalysis.averageConfidence * 100).toFixed(0)}%
-                                </p>
-                                <p className="text-xs text-gray-600">confiança IA</p>
-                              </div>
-                            )}
-                          </div>
-                          
-                          <div className="flex space-x-2">
-                            <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => downloadExtract(file.id)}>
-                              <Download className="h-4 w-4 mr-1" />
-                              Baixar Planilha
-                            </Button>
-                          </div>
+                          <span className="text-sm font-medium">{getStatusText(file.status)}</span>
                         </div>
                         
-                        {file.categories && (
+                        {file.status === 'completed' && (
+                          <Button 
+                            size="sm" 
+                            onClick={() => downloadExtract(file.id)}
+                            className="bg-green-600 hover:bg-green-700"
+                          >
+                            <Download className="h-4 w-4 mr-1" />
+                            Baixar CSV
+                          </Button>
+                        )}
+                        
+                        <Button 
+                          variant="ghost" 
+                          size="sm"
+                          onClick={() => removeFile(file.id)}
+                          disabled={isProcessing && file.status !== 'completed'}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                    
+                    {/* Progress bar */}
+                    {(file.status === 'uploading' || file.status === 'processing') && (
+                      <Progress value={file.progress} className="mb-3" />
+                    )}
+                    
+                    {/* Warnings */}
+                    {file.validationWarnings && file.validationWarnings.length > 0 && (
+                      <Alert className="mb-3">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          <strong>Avisos:</strong> {file.validationWarnings.join(', ')}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    
+                    {/* Error display */}
+                    {file.status === 'error' && file.error && (
+                      <Alert variant="destructive" className="mb-3">
+                        <XCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          <strong>Erro:</strong> {file.error}
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    
+                    {/* Success details */}
+                    {file.status === 'completed' && (
+                      <div>
+                        <div className="flex items-center space-x-4 text-sm text-gray-600">
+                          <span>📊 {file.transactions} transações</span>
+                          <span>🏷️ {file.categories?.length} categorias</span>
+                          {file.analysis && (
+                            <span>🎯 {Math.round(file.analysis.averageConfidence * 100)}% confiança</span>
+                          )}
+                        </div>
+                        
+                        {file.categories && file.categories.length > 0 && (
                           <div className="mt-3">
                             <p className="text-sm text-gray-600 mb-2">Categorias encontradas:</p>
                             <div className="flex flex-wrap gap-1">
@@ -781,25 +554,53 @@ const downloadExtract = async (fileId: string) => {
           </Card>
         )}
 
-        {/* Empty State */}
+        {/* Empty state melhorado */}
         {files.length === 0 && (
-          <Card className="text-center py-12">
+          <Card className="text-center py-16">
             <CardContent>
-              <FileSpreadsheet className="mx-auto h-16 w-16 text-gray-400 mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">Nenhum extrato enviado ainda</h3>
-              <p className="text-gray-500 mb-6">
-                Comece fazendo upload do seu primeiro extrato bancário
+              <FileSpreadsheet className="mx-auto h-20 w-20 text-gray-400 mb-6" />
+              <h3 className="text-2xl font-medium text-gray-900 mb-3">Bem-vindo ao Bolsin!</h3>
+              <p className="text-gray-500 mb-8 max-w-md mx-auto">
+                Transforme seus extratos bancários em planilhas organizadas automaticamente. 
+                Nossa IA categoriza suas transações em segundos.
               </p>
-              <Button>
-                <Upload className="h-4 w-4 mr-2" />
-                Fazer Primeiro Upload
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-2xl mx-auto mb-8">
+                <div className="text-center">
+                  <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <Upload className="h-6 w-6 text-blue-600" />
+                  </div>
+                  <h4 className="font-medium">1. Upload</h4>
+                  <p className="text-sm text-gray-500">Envie seu extrato</p>
+                </div>
+                <div className="text-center">
+                  <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <Brain className="h-6 w-6 text-purple-600" />
+                  </div>
+                  <h4 className="font-medium">2. IA Processa</h4>
+                  <p className="text-sm text-gray-500">Categorização automática</p>
+                </div>
+                <div className="text-center">
+                  <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                    <Download className="h-6 w-6 text-green-600" />
+                  </div>
+                  <h4 className="font-medium">3. Download</h4>
+                  <p className="text-sm text-gray-500">Planilha organizada</p>
+                </div>
+              </div>
+              <Button 
+                size="lg"
+                onClick={() => document.getElementById('fileInput')?.click()}
+                className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+              >
+                <Upload className="h-5 w-5 mr-2" />
+                Começar Agora
               </Button>
             </CardContent>
           </Card>
         )}
       </div>
-      
-      <DebugPanel />
     </div>
   )
 }
+
+
