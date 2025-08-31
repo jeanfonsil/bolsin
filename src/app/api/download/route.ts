@@ -19,6 +19,36 @@ export async function POST(request: NextRequest) {
     monitoring.startProcess(fileId, 'download', { timestamp: new Date().toISOString() })
 
     const fileData = fileStore.get(fileId)
+    // Se já temos dados processados em memória (PDF ou CSV), usar diretamente
+    const dataAny: any = fileData as any
+    if (dataAny && Array.isArray(dataAny.processedRows) && dataAny.processedRows.length > 0) {
+      const formattedTransactions = dataAny.processedRows.map((t: any, index: number) => ({
+        ID: index + 1,
+        Data: formatDateForDownload(t.date),
+        Descrição: cleanDescription(t.description),
+        Valor: formatCurrency(t.amount),
+        Tipo: t.type === 'debit' ? 'Débito' : 'Crédito',
+        Categoria: t.category || 'Outros',
+        'Confiança IA': formatConfidence(t.aiConfidence ?? 0)
+      }))
+      monitoring.completeProcess(fileId, 'download', {
+        transactionsDownloaded: formattedTransactions.length,
+        fileName: dataAny.metadata?.originalName,
+        source: 'processedRows'
+      })
+      return NextResponse.json({
+        success: true,
+        data: {
+          transactions: formattedTransactions,
+          metadata: {
+            totalTransactions: formattedTransactions.length,
+            fileId,
+            generatedAt: new Date().toISOString()
+          }
+        },
+        source: 'processedRows'
+      })
+    }
     if (!fileData || fileData.metadata?.fileType !== 'csv') {
       monitoring.errorProcess(fileId, 'download', 'Arquivo não encontrado ou tipo inválido', {
         errorType: 'file_not_found',
@@ -137,4 +167,3 @@ function formatConfidence(confidence: number): string {
   if (typeof confidence !== 'number' || isNaN(confidence)) return '0%'
   return `${(confidence * 100).toFixed(1)}%`
 }
-

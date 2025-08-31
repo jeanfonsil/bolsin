@@ -132,11 +132,32 @@ export default function UploadDashboard() {
         f.id === realFileId ? { ...f, progress: 50 } : f
       ))
 
-      const processResponse = await fetch('/api/process', {
+      // Se for PDF, solicitar senha opcional
+      let password: string | undefined
+      if ((uploadResult.data.type || '').toLowerCase() === 'pdf') {
+        password = window.prompt('Se o PDF tiver senha, digite-a (opcional):') || undefined
+      }
+
+      let processResponse = await fetch('/api/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileId: realFileId })
+        body: JSON.stringify({ fileId: realFileId, password })
       })
+
+      // Se o servidor solicitar senha, perguntar novamente e tentar uma vez
+      if (processResponse.status === 422) {
+        const body = await processResponse.json().catch(() => ({}))
+        if (body?.requiresPassword) {
+          const retry = window.prompt('PDF protegido. Informe a senha para processar:')
+          if (retry) {
+            processResponse = await fetch('/api/process', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ fileId: realFileId, password: retry })
+            })
+          }
+        }
+      }
       
       const processResult = await processResponse.json()
       console.log('⚙️ Processamento resultado:', processResult)
@@ -210,22 +231,33 @@ export default function UploadDashboard() {
         throw new Error(result.error || 'Erro no download')
       }
 
-      const csvData = result.data.transactions as any[]
+      // Prefer processed rows from the client state when available
+      const csvData = (fileData.processedRows as any[] | undefined)?.map((t: any, index: number) => ({
+        ID: index + 1,
+        Data: formatDateForDownload(t.date),
+        Descrição: cleanDescription(t.description),
+        Valor: formatCurrency(t.amount),
+        Tipo: t.type === 'debit' ? 'Débito' : 'Crédito',
+        Categoria: t.category || 'Outros',
+        'Confiança IA': typeof t.aiConfidence === 'number' ? `${(t.aiConfidence * 100).toFixed(1)}%` : '—',
+        Canal: t.channel || 'other',
+        Direção: t.direction === 'in' ? 'Entrada' : 'Saída',
+        Contraparte: t.counterparty || ''
+      })) || (result.data.transactions as any[])
 
-      // Gerar CSV otimizado
+      // Gerar CSV otimizado (quote em vírgula, aspas, quebras de linha)
       const headers = Object.keys(csvData[0])
-      const csvContent = [
-        headers.join(','),
-        ...csvData.map(row => 
-          headers.map(header => {
-            const value = row[header as keyof typeof row]
-            if (typeof value === 'string' && (value.includes(',') || value.includes('"'))) {
-              return `"${value.replace(/"/g, '""')}"`
-            }
-            return value
-          }).join(',')
-        )
-      ].join('\n')
+      const esc = (val: any) => {
+        let s = val == null ? '' : String(val)
+        // normalizar quebras de linha em espaço simples
+        s = s.replace(/[\r\n]+/g, ' ')
+        if (/[",\n\r]/.test(s)) {
+          return '"' + s.replace(/"/g, '""') + '"'
+        }
+        return s
+      }
+      const rows = csvData.map(row => headers.map(h => esc(row[h as keyof typeof row])).join(','))
+      const csvContent = [headers.join(','), ...rows].join('\r\n')
 
       // Download com BOM para Excel
       const BOM = '\uFEFF'

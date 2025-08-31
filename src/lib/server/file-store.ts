@@ -12,6 +12,7 @@ interface FileData {
     size: number
     uploadedAt: string
   }
+  processedRows?: any[]
 }
 
 // Store global em memória (Node.js)
